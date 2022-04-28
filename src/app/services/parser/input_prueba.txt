@@ -1,0 +1,12 @@
+''' esto es un Comentario
+de varias lineas '''
+
+!! solo pruebo que los comentarios 
+!! funcionen
+
+Mostrar("esto es un comentario\ncon salto y con\ttab") !!esto es un comentario en un comando mostrar
+
+'''correctamente, 
+espero  que si
+funcionen
+'''

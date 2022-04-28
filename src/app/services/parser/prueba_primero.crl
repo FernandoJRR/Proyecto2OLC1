@@ -1,0 +1,63 @@
+'''
+ * To change this license header, choose License Headers in Project Properties.
+ * To change this template file, choose Tools | Templates
+ * and open the template in the editor.
+'''
+'''
+ *
+ * @author Jonathan
+'''
+
+String cadena,cadena_temporal = "cadena"+"esta otra cadena"
+Char escape_character = ('\n')
+Int numero , numero2, tercera ,declaracion
+numero = 4+8+"cadena"+5
+Void Anidar(Int arreglo):
+
+'''
+Void Anidar2(Int arreglo):
+    Para(Int i = 0; i < 8 - 1; ++):
+		Para(Int j = 0; j <9  - 1; ++):
+			Si(i < j):
+				Int tmp = j
+				arreglo = arreglo
+				arreglo = tmp !!desde aqui decrece la indentacion
+	Para(Int i = 0;i < 8; ++):
+		arreglo=arreglo+1
+
+String mensaje="" 
+Void dimeSiEdadEsCritica(Int edad):
+    Si(edad == 0):
+      mensaje = "acaba de nacer"
+    Sino:
+      Si(edad == 18):
+        mensaje = ("Esta justo en la mayoria de edad")
+      Sino:
+        Si(edad == 65):
+          mensaje = ("Esta en la edad de jubilacion")
+        Sino:
+          mensaje = ("La edad no es critica")
+
+ 
+Void evaluar ( Int numero ):
+  Si(numero == 1):
+    salida("Uno")
+
+  Si(numero == 2):
+    salida("Dos")
+
+  Si(numero == 3):
+    salida("Tres")
+
+  Si(numero == 4):
+    salida("Cuatro")
+
+  Si(numero == 5 || numero == 6):
+    salida("Cinco o Seis")
+
+  Si(numero < 0 && numero > 6):
+    salida("Otro")
+
+Void salida ( String cadena ):
+  Mostrar("{0}",cadena)
+'''
