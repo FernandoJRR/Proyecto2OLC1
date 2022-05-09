@@ -3,7 +3,6 @@ export class ErrorList {
     
     constructor(){
         this.errores = [];
-        console.log("");
     }
 
     public agregarError(error: InterpreterError){

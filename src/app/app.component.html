@@ -15,4 +15,35 @@
   </mat-menu>
 </mat-toolbar>
 
+<!--
+<form class="input-form">
+  <mat-form-field style="width: 70%; margin-left: 15%; margin-top: 2%; background-color: #303030;" appearance="fill">
+    <mat-label style="color: #c8c8c8;">Ingresa un programa:</mat-label>
+    <code>
+      <textarea id="code-area" rows="30" cols="130" matInput placeholder="" style="color: #fff;" 
+      (keydown)="manejoTab($event)"
+      #contenido_programa
+      ></textarea>
+    </code>
+  </mat-form-field>
+</form>
+-->
+
+<div style="width: 70%; margin-left: 15%; margin-top: 2%;">
+  <ngx-codemirror [(ngModel)]="content"[options]="{lineNumbers: true, theme: 'material',mode: 'clr'}" #contenido_programa>
+  </ngx-codemirror>
+</div>
+
+<form class="console-form">
+  <mat-form-field style="width: 70%; margin-left: 15%; margin-top: 2%; background-color: #303030;" appearance="fill">
+    <mat-label style="color: #c8c8c8;">Output:</mat-label>
+    <code>
+      <textarea [formControl]="area_codigo" id="code-area" rows="10" cols="130" matInput placeholder="" style="color: #fff;" readonly></textarea>
+    </code>
+  </mat-form-field>
+</form>
+
+
+<button (click) = "compilar(contenido_programa.value)">Compilar</button>
+
 <router-outlet></router-outlet>

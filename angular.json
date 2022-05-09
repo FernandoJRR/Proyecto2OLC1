@@ -28,9 +28,13 @@
             ],
             "styles": [
               "./node_modules/@angular/material/prebuilt-themes/pink-bluegrey.css",
-              "src/styles.css"
+              "src/styles.css",
+              "./node_modules/codemirror/lib/codemirror.css",
+              "./node_modules/codemirror/theme/material.css"
             ],
-            "scripts": []
+            "scripts": [
+              "src/app/services/parser/crl_parser.js"
+            ]
           },
           "configurations": {
             "production": {

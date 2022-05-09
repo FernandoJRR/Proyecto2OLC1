@@ -15,15 +15,24 @@ class Scope {
 
 export class TablaDeSimbolos {
     scope: Scope;
-    parent_scope: TablaDeSimbolos|null;
+    parent_scope: TablaDeSimbolos|undefined;
     
     simbolos: Map<IdTipo, Simbolo>;
     
-    inner_scopes: TablaDeSimbolos[]
-
-    constructor(scope: Scope, parent_scope: TablaDeSimbolos|null) {
-        this.scope = scope;
-        this.parent_scope = parent_scope;
+    inner_scopes: TablaDeSimbolos[]; 
+    
+    constructor(scope?: Scope, parent_scope?: TablaDeSimbolos) {
+        if (scope == undefined) {
+            this.scope = new Scope(ScopeType.Global, "Global");   
+        } else {
+            this.scope = scope;
+        }
+        
+        if (parent_scope == undefined) {
+            this.parent_scope = undefined
+        } else {
+            this.parent_scope = parent_scope;
+        }
         
         this.simbolos = new Map();
         

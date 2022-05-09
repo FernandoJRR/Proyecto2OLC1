@@ -7,6 +7,10 @@ import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
 import { MatToolbarModule } from "@angular/material/toolbar";
 import { MatMenuModule } from "@angular/material/menu";
 import { MatButtonModule } from "@angular/material/button";
+import { MatInputModule } from "@angular/material/input";
+import { ReactiveFormsModule } from '@angular/forms';
+import { CodemirrorModule } from "@ctrl/ngx-codemirror";
+import { FormsModule } from "@angular/forms";
 
 @NgModule({
   declarations: [
@@ -19,6 +23,10 @@ import { MatButtonModule } from "@angular/material/button";
     MatToolbarModule,
     MatMenuModule,
     MatButtonModule,
+    MatInputModule,
+    ReactiveFormsModule,
+    CodemirrorModule,
+    FormsModule,
   ],
   providers: [],
   bootstrap: [AppComponent]

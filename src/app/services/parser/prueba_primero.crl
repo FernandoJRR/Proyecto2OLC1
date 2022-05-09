@@ -1,20 +1,29 @@
+Importar math.clr
+Importar random.clr
+
 '''
  * To change this license header, choose License Headers in Project Properties.
  * To change this template file, choose Tools | Templates
- * and open the template in the editor.
+ * and open the template in the editorear
 '''
 '''
  *
  * @author Jonathan
 '''
+Incerteza 0.5
 
 String cadena,cadena_temporal = "cadena"+"esta otra cadena"
 Char escape_character = ('\n')
 Int numero , numero2, tercera ,declaracion
-numero = 4+8+"cadena"+5
 Void Anidar(Int arreglo):
+	Para(Int i = 0; i < 8 - 1; ++):
+		Para(Int j = 0; i <= limite; --):
+			Para(Int j = 0; i <= limite2; --):
+				Int temp = j
+		Para(Int j = 0; i <= limite; --):
+	Si(limite < fin):
+		Para(Int j = 0; i <= final; --):
 
-'''
 Void Anidar2(Int arreglo):
     Para(Int i = 0; i < 8 - 1; ++):
 		Para(Int j = 0; j <9  - 1; ++):
@@ -26,38 +35,39 @@ Void Anidar2(Int arreglo):
 		arreglo=arreglo+1
 
 String mensaje="" 
+
 Void dimeSiEdadEsCritica(Int edad):
     Si(edad == 0):
-      mensaje = "acaba de nacer"
+		mensaje = "acaba de nacer"
     Sino:
-      Si(edad == 18):
-        mensaje = ("Esta justo en la mayoria de edad")
-      Sino:
-        Si(edad == 65):
-          mensaje = ("Esta en la edad de jubilacion")
-        Sino:
-          mensaje = ("La edad no es critica")
+		Si(edad == 18):
+        	mensaje = ("Esta justo en la mayoria de edad")
+		Sino:
+			Si(edad == 65):
+				mensaje = ("Esta en la edad de jubilacion")
+			Sino:
+				mensaje = ("La edad no es critica")
 
- 
 Void evaluar ( Int numero ):
-  Si(numero == 1):
-    salida("Uno")
+	Si(numero == 1):
+		salida("Uno")
+	Si(numero == 2):
+		salida("Dos")
 
-  Si(numero == 2):
-    salida("Dos")
+	Si(numero == 3):
+    	salida("Tres")
 
-  Si(numero == 3):
-    salida("Tres")
+	Si(numero == 4):
+    	salida("Cuatro")
 
-  Si(numero == 4):
-    salida("Cuatro")
+	Si(numero == 5 || numero == 6):
+    	salida("Cinco o Seis")
 
-  Si(numero == 5 || numero == 6):
-    salida("Cinco o Seis")
-
-  Si(numero < 0 && numero > 6):
-    salida("Otro")
+	Si(numero < 0 && numero > 6):
+    	salida("Otro")
 
 Void salida ( String cadena ):
-  Mostrar("{0}",cadena)
-'''
+	Mostrar("Numero es: {0}, el extra es {1}",cadena,extra)
+	multiplesParametros(primero, segundo)
+	otro(4.5, segundo, "cadena")
+''' Aqui terminan las declaraciones originales del primer archivo '''
