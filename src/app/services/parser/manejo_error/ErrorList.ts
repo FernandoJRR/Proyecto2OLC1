@@ -50,7 +50,7 @@ class InterpreterError {
             } else if (lexema === "\t") {
                 lexema = lexema.replace("\t","TABULACION");
             }
-            errorString = "Error con: "+lexema+" en linea: "+this.linea+" y columna: "+this.columna+"\n"+this.descripcion;
+            errorString = "Error con: '"+lexema+"' en linea: "+this.linea+" y columna: "+this.columna+"\n"+this.descripcion;
         }
         return errorString;
     }

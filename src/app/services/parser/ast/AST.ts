@@ -1,3 +1,4 @@
+import { ErrorList } from "../manejo_error/ErrorList";
 import { Token } from "../model/Token";
 
 export class AST{
@@ -8,11 +9,19 @@ export class AST{
     }
     
     recorrer():void {
-        interpretar(this.raiz);
+        recorrer(this.raiz,true);
     }
     
-    obtenerRecorrido(): string{
-        return interpretar(this.raiz);
+    recorrer_expresion(nodo: NodoExpresion|Terminal|NodoInstruccion){
+        return recorrer(nodo,true);
+    }
+    
+    recorrer_funcion(nodo: NodoNoTerminal){
+        return recorrer(nodo,false);
+    }
+    
+    obtenerRecorrido(): string|any{
+        return recorrer(this.raiz,true);
     }
     
     nuevaImportacion(archivo: Terminal){
@@ -96,7 +105,7 @@ export class UtilidadesAST{
     }
 
     nuevaInstruccionDibujarAST(identificador: Terminal){
-        let nodo = new NodoInstruccion(TipoInstruccion.DibujarExpresion);
+        let nodo = new NodoInstruccion(TipoInstruccion.DibujarAST);
         
         nodo.agregarHijo(identificador);
         return nodo;
@@ -174,8 +183,10 @@ export class UtilidadesAST{
         return nodoCondicion;
     }
 
-    nuevaInstruccionSino(): NodoInstruccion{
-        return new NodoInstruccion(TipoInstruccion.Sino);
+    nuevaInstruccionSino(sinoKW: Terminal): NodoInstruccion{
+        let nodo =  new NodoInstruccion(TipoInstruccion.Sino);
+        nodo.agregarHijo(sinoKW);        
+        return nodo;        
     }
 
     nuevoTerminal(lexema:string, linea: number, columna: number): Terminal {
@@ -234,6 +245,16 @@ export class UtilidadesAST{
         
         return nodoParametros;
     }
+    
+    nuevosParametrosMostrar(parametros: (NodoExpresion|Terminal)[]): NodoNoTerminal {
+        let nodoParametros = new NodoNoTerminal(TipoNoTerminal.ParametrosMostrar);
+
+        parametros.forEach(parametro => {
+            nodoParametros.agregarHijo(parametro);
+        });
+
+        return nodoParametros;
+    }
 
     nuevaLlamadaFuncion(identificador: Terminal, parametros?: NodoNoTerminal): NodoInstruccion{
         let nodoLlamada = new NodoInstruccion(TipoInstruccion.LlamadaFuncion);    
@@ -278,9 +299,50 @@ export class UtilidadesAST{
         return new NodoExpresion(tipoOperacion, expresiones);
     }
     
-    nuevasInstrucciones(instrucciones: NodoInstruccion[]): NodoNoTerminal{
+    nuevasInstrucciones(instrucciones: NodoInstruccion[], errores: ErrorList): NodoNoTerminal{
         let nodoInstrucciones = new NodoNoTerminal(TipoNoTerminal.Instrucciones);
+        
+        let posicionesParesSiSino: number[] = []
+        
+        //Se comprueba si las instrucciones contienen Si o Sino y si estas estan bien posicionadas        
+        for (let i = 0; i < instrucciones.length; i++) {
+            if (instrucciones[i].tipoInstruccion == TipoInstruccion.Sino) {
+                if (i-1 >= 0) {
+                    if (instrucciones[i-1].tipoInstruccion != TipoInstruccion.Si) {
+                        //es un error que la instruccion antes de SINO no sea SI
+                        errores.agregarErrorParametros("SINO", this.obtenerLineaNodo(instrucciones[i]), 0, "La instruccion SINO debe estar asociada a una instruccion SI");
+                    } else {
+                        posicionesParesSiSino.push(i-1);
+                    }
+                } else {
+                    //es un error que la instruccion antes de SINO no exista
+                    errores.agregarErrorParametros("SINO", this.obtenerLineaNodo(instrucciones[i]), 0, "La instruccion SINO debe estar asociada a una instruccion SI");
+                }
+            }
+        }
+        
+        /*
+        //Unimos las instrucciones SINO dentro de sus respectivas instrucciones SI
+        posicionesParesSiSino.forEach(par => {
+            let sinoActual:NodoInstruccion = instrucciones[par+1];
+            instrucciones[par].agregarHijo(sinoActual);            
+        });
+        */
+        
+        //Eliminamos los SINO agregados de instrucciones
+        instrucciones.forEach(function(item, index, object) {
+        if (item.tipoInstruccion === TipoInstruccion.Si) {
+            if (instrucciones[index+1] != undefined) {
+                if (instrucciones[index+1].tipoInstruccion === TipoInstruccion.Sino) {
+                    let sinoActual:NodoInstruccion = instrucciones[index+1];
+                    instrucciones[index].agregarHijo(sinoActual);            
+                    object.splice(index+1, 1);
+                }
+            }
+        }
+        });
 
+        //Agregamos las instrucciones al nodo        
         instrucciones.forEach(instruccion => {
             nodoInstrucciones.agregarHijo(instruccion);
         });
@@ -288,18 +350,65 @@ export class UtilidadesAST{
         return nodoInstrucciones;
     }
     
-    agregarInstruccionAPadreInstruccion(nodoPadre: NodoInstruccion, nodoHijo: NodoInstruccion){
+    agregarInstruccionAPadreInstruccion(nodoPadre: NodoInstruccion, nodoHijo: NodoInstruccion, errores: ErrorList){
         let tipoInstruccion = nodoPadre.tipoInstruccion;
+        let tipoInstruccionHijo = nodoHijo.tipoInstruccion; //Se comprueba si el nodo hijo tiene un nodo
+        
+        //Se comprueba si el nodo padre acepta hijos
         if (tipoInstruccion >= 12 && tipoInstruccion <= 16) {
+            
+            //Se comprueba si el nodo padre ya tiene un NodoNoTerminal de tipo Instrucciones
             if (nodoPadre.hijos[nodoPadre.hijos.length-1] instanceof NodoNoTerminal) {
+
                 if ((nodoPadre.hijos[nodoPadre.hijos.length-1] as NodoNoTerminal).tipoNoTerminal == TipoNoTerminal.Instrucciones) {
-                    (nodoPadre.hijos[nodoPadre.hijos.length-1] as NodoNoTerminal).agregarHijo(nodoHijo);
-                } else {
+                    
+                    //Se comprueba si la instruccion que se quiere agregar es un SINO
+                    if (tipoInstruccionHijo === TipoInstruccion.Sino) {
+                        let nodoInstrucciones = (nodoPadre.hijos[nodoPadre.hijos.length-1] as NodoNoTerminal);
+                        let instruccionAnterior = nodoInstrucciones.hijos[nodoInstrucciones.hijos.length-1] as NodoInstruccion;
+                        //Si la instruccion anterior es un SI entonces se le agregara el SINO
+                        if (instruccionAnterior.tipoInstruccion === TipoInstruccion.Si) {
+                            //Se comprueba que la instruccion SI no tenga ya un sino
+                            if (instruccionAnterior.hijos[instruccionAnterior.hijos.length-1] instanceof NodoInstruccion) {
+                                //Es un error que se intente ingresar una instruccion SINO donde hay otra instruccion SINO
+                                if ((instruccionAnterior.hijos[instruccionAnterior.hijos.length-1] as NodoInstruccion).tipoInstruccion === TipoInstruccion.Sino) { 
+                                    errores.agregarErrorParametros("SINO", this.obtenerLineaNodo(nodoHijo), 0, "La instruccion SINO debe estar asociada a una instruccion SI");
+                                    (nodoPadre.hijos[nodoPadre.hijos.length-1] as NodoNoTerminal).agregarHijo(nodoHijo);
+                                } else {
+                                    instruccionAnterior.agregarHijo(nodoHijo);       
+                                }
+                            } else {
+                                instruccionAnterior.agregarHijo(nodoHijo);       
+                            }
+                        } else { //Es un error que la instruccion SINO no sea precedida por una instruccion SI
+                            errores.agregarErrorParametros("SINO", this.obtenerLineaNodo(nodoHijo), 0, "La instruccion SINO debe estar asociada a una instruccion SI");
+                            (nodoPadre.hijos[nodoPadre.hijos.length-1] as NodoNoTerminal).agregarHijo(nodoHijo);
+                        }
+                    } else {
+                        (nodoPadre.hijos[nodoPadre.hijos.length-1] as NodoNoTerminal).agregarHijo(nodoHijo);
+                    }
+                    
+                    
+                    
+                } else { //En caso de que no se agrega un NodoNoTerminal de tipo Instrucciones
                     nodoPadre.agregarHijo(new NodoNoTerminal(TipoNoTerminal.Instrucciones));
+                    
+                    //Es un error que la primera instruccion sea SINO
+                    if (tipoInstruccionHijo === TipoInstruccion.Sino) {
+                        errores.agregarErrorParametros("SINO", this.obtenerLineaNodo(nodoHijo), 0, "La instruccion SINO debe estar asociada a una instruccion SI");
+                    }
+                    
                     (nodoPadre.hijos[nodoPadre.hijos.length-1] as NodoNoTerminal).agregarHijo(nodoHijo);
                 }
-            } else {
+                
+            } else { //En caso de que no se agrega un NodoNoTerminal de tipo Instrucciones
                 nodoPadre.agregarHijo(new NodoNoTerminal(TipoNoTerminal.Instrucciones));
+                
+                //Es un error que la primera instruccion sea SINO
+                if (tipoInstruccionHijo === TipoInstruccion.Sino) {
+                    errores.agregarErrorParametros("SINO", this.obtenerLineaNodo(nodoHijo), 0, "La instruccion SINO debe estar asociada a una instruccion SI");
+                }
+
                 (nodoPadre.hijos[nodoPadre.hijos.length-1] as NodoNoTerminal).agregarHijo(nodoHijo);
             }
         }        
@@ -313,257 +422,386 @@ export class UtilidadesAST{
             return this.obtenerLineaNodo(nodo.hijos[0]);
         }
     }
+    
+    obtenerColumnaNodo(nodo: Nodo|Terminal): number{
+        if (nodo instanceof Terminal) {
+            return (nodo as Terminal).token.columna;
+        } else {
+            return this.obtenerColumnaNodo(nodo.hijos[0]);
+        }
+    }
 }
 
 
 //Se interpreta el AST nodo por nodo recursivamente
-function interpretar(nodo: Nodo | Terminal): string {
+function recorrer(nodo: Nodo | Terminal, conExpresiones: boolean): string|any {
     //Se obtiene la clase de nodo que se esta interpretando
-    let retornoString = "";
+    let objetoNodo:any = {name: "", childs: []}
+    let hijos:any = []    
+
     if (nodo instanceof Nodo) {
         if (nodo instanceof NodoRaiz) {											//se espera la estructura -> hijos: instruccion, instruccion,...,instruccion
 
-            retornoString = "(Programa:\n";
+            objetoNodo["name"] = "Programa"
+            
             nodo.hijos.forEach(hijo => {
-                retornoString += interpretar(hijo);
+                hijos.push(recorrer(hijo,conExpresiones));
             });
-            retornoString += ")";
-            return retornoString;
+            
+            objetoNodo["childs"] = hijos;
+            return objetoNodo;
             
         } else if (nodo instanceof NodoInstruccion) {
             
-            retornoString = "(Instruccion:\n";
+            objetoNodo["name"] = "Instruccion"
             switch (nodo.tipoInstruccion) {
                 case TipoInstruccion.Importacion:								//se espera la estructura -> hijos: Terminal(Token(Archivo))
                     
-                    let archivo: Token = (nodo.hijos[0] as Terminal).token; 
-                    retornoString += "(Importacion:"+archivo.lexema+")\n";
-                    break;
+                    objetoNodo["name"] = "Importacion";
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
 
                 case TipoInstruccion.Incerteza:									//se espera la estructura -> hijos: NodoExpresion
 
-                    let nodoExpresion: NodoExpresion = nodo.hijos[0] as NodoExpresion;
-                    retornoString += "(Incerteza:"+interpretar(nodoExpresion)+")\n";
-                    break;
+                    objetoNodo["name"] = "Incerteza"
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
                     
                 case TipoInstruccion.DeclaracionVariable:						//se espera la estructura -> hijos: TerminalTipodato(TipoDato), NodoNoTerminal(Identificadores) [, NodoExpresion|Terminal]?
                     
-                    let tipoDato: string = interpretar(nodo.hijos[0]);
-                    let identificadores: string = interpretar(nodo.hijos[1]);
-                    retornoString += "(DeclaracionVariable: "+tipoDato+"|Identificadores:"+identificadores;
+                    objetoNodo["name"] = "Declaracion Variable"
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    hijos.push(recorrer(nodo.hijos[1],conExpresiones));
                     if (nodo.hijos.length === 3) {
-                        retornoString += "|Expresion:"+interpretar(nodo.hijos[2]);
+                        hijos.push(recorrer(nodo.hijos[2],conExpresiones));
                     }
-                    retornoString += ")\n";
-                    break;
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
                     
                 case TipoInstruccion.Asignacion:                                //se espera la estructura -> hijos: Terminal(Token(Identificador)), NodoExpresion|Terminal
-                    let identificador: string = interpretar(nodo.hijos[0]);
-                    let valorAsignado: string = interpretar(nodo.hijos[1]);
+                    
+                    objetoNodo["name"] = "Asignacion"
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                    objetoNodo["childs"] = hijos;
 
-                    retornoString += "(Asignacion: Identificador:"+identificador+"|Valor:"+valorAsignado;
-                    break;
-                case TipoInstruccion.DeclaracionFuncion:                        //se espera la estructura -> hijos: TerminalTipoDato(TipoDato), Terminal(Token(Identificador)), [, NodoNoTerminal(DeclaracionParametros)]
-                    let tipoDatoFuncion: string = interpretar(nodo.hijos[0]);
-                    let identificadorFuncion: string = interpretar(nodo.hijos[1]);
-                    let parametrosFuncion: string = "";
-                    let instruccionesFuncion: string = "";
-                    if (nodo.hijos.length === 3) {
-                        parametrosFuncion = interpretar(nodo.hijos[2]);
-                    } else if (nodo.hijos.length === 4) {
-                        instruccionesFuncion = interpretar(nodo.hijos[3]);
+                    return objetoNodo;                                       
+                case TipoInstruccion.DeclaracionFuncion:                        //se espera la estructura -> hijos: TerminalTipoDato(TipoDato), Terminal(Token(Identificador)), NodoNoTerminal(DeclaracionParametros) [, Instrucciones]
+                    objetoNodo["name"] = "Declaracion Funcion"
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                    hijos.push(recorrer(nodo.hijos[2],conExpresiones));
+                    if (nodo.hijos[3] != undefined) {
+                        hijos.push(recorrer(nodo.hijos[3],conExpresiones));
                     }
                     
-                    retornoString += "(Declaracion: "+tipoDatoFuncion+"|"+identificadorFuncion+"|Parametros:"+parametrosFuncion+"|Instrucciones:"+instruccionesFuncion;
-                    break;
+                    objetoNodo["childs"] = hijos;                    
+                    return objetoNodo;
                 case TipoInstruccion.LlamadaFuncion:                            //se espera la estructura -> hijos: Terminal(Identificador)[, NodoNoTerminal(Parametros)]
-                    let identificadorLlamada = interpretar(nodo.hijos[0]);
-                    let parametrosLlamada: string = "";
+                    objetoNodo["name"] = "Llamada Funcion"
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
                     if (nodo.hijos.length == 2) {
-                        parametrosLlamada = interpretar(nodo.hijos[1]);
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
                     }
-                    retornoString += "(Llamada: "+identificadorLlamada+"|Parametros:"+parametrosLlamada;
-                    break;
-                case TipoInstruccion.Continuar:
-                    retornoString += "(Continuar)"
-                    break;    
-                case TipoInstruccion.Detener:
-                    retornoString += "(Detener)"
-                    break;    
-                case TipoInstruccion.Retorno:
-                    let valorRetornado = "VOID";
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
+                case TipoInstruccion.Continuar:                                 //se espera la estrcutura -> hijos: Terminal(Continuar)
+                    objetoNodo["name"] = "Continuar"
+                    return objetoNodo;
+                case TipoInstruccion.Detener:                                   //se espera la estructura -> hijos: Terminal(Detener)
+                    objetoNodo["name"] = "Detener"
+                    return objetoNodo;
+                case TipoInstruccion.Retorno:                                   //se espera la estructura -> hijos: Terminal(Retorno) [, NodoExpresion|Terminal]
+                    objetoNodo["name"] = "Retorno"
                     if(nodo.hijos.length == 2){
-                        valorRetornado = interpretar(nodo.hijos[1]);
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));                        
                     }
-                    retornoString += "(Retorno:"+valorRetornado+")";
-                    break;    
-                    /*
-                case TipoInstruccion.Mostrar:
-                    break;
-                case TipoInstruccion.DibujarAST:
-                    break;
-                case TipoInstruccion.DibujarTabla:
-                    break;
-                case TipoInstruccion.DibujarExpresion:
-                    break;
-                */
-                case TipoInstruccion.Mientras:                                  //se espera la estructura -> hijos: NodoExpresion|Terminal [, Instrucciones]
-                    let condicionMientras = interpretar(nodo.hijos[0]);
-                    let instruccionesMientras = interpretar(nodo.hijos[1]);
-                    retornoString += "(Mientras: Condicion:"+condicionMientras+"|Instrucciones:"+instruccionesMientras;
-                    break;
-                case TipoInstruccion.Para:                                      //se espera la estructura -> hijos: NodoNoTerminal(CondicionInicialPara(Terminal(Identificador),NodoExpresion|Terminal)), NodoExpresion|Terminal, Terminal [, Instrucciones]
-                    let condicionInicial = interpretar(nodo.hijos[0]);
-                    let condicion = interpretar(nodo.hijos[1]);
-                    let cambio = interpretar(nodo.hijos[2]);
-                    let instrucciones = interpretar(nodo.hijos[3]);
+                    objetoNodo["childs"] = hijos;
                     
-                    retornoString += "(Para: CondicionInicial:"+condicionInicial+"|Condicion:"+condicion+"|Cambio:"+cambio+"|Instrucciones:"+instrucciones+"FINPARA";
-                    break;
+                    return objetoNodo;
+                case TipoInstruccion.Mostrar:
+                    objetoNodo["name"] = "Mostrar"
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
+                case TipoInstruccion.DibujarAST:                                //se espera la estructura -> hijos: Terminal(Identificador) 
+                    objetoNodo["name"] = "DibujarAST"
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
+                case TipoInstruccion.DibujarTabla:                              //se espera la estructura -> hijos:
+                    objetoNodo["name"] = "DibujarTabla"
+                    return objetoNodo;
+                case TipoInstruccion.DibujarExpresion:                          //se espera la estructura -> hijos: NodoExpresion|Terminal
+                    objetoNodo["name"] = "DibujarExpresion"
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
+                case TipoInstruccion.Mientras:                                  //se espera la estructura -> hijos: NodoExpresion|Terminal [, Instrucciones]
+                    objetoNodo["name"] = "Mientras"
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
+                case TipoInstruccion.Para:                                      //se espera la estructura -> hijos: NodoNoTerminal(CondicionInicialPara(Terminal(Identificador),NodoExpresion|Terminal)), NodoExpresion|Terminal, Terminal [, Instrucciones]
+                    objetoNodo["name"] = "Para"
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                    hijos.push(recorrer(nodo.hijos[2],conExpresiones));
+                    let instrucciones = "NADA";
+                    
+                    if (nodo.hijos.length == 4) {
+                        instrucciones = recorrer(nodo.hijos[3],conExpresiones);
+                        hijos.push(recorrer(nodo.hijos[3],conExpresiones));
+                    }
+                    
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
+                case TipoInstruccion.Si:                                        //se espera la estructura -> hijos: NodoExpresion|Terminal [,Instrucciones] [,Sino]
+                    objetoNodo["name"] = "Si"
+                    
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    if (nodo.hijos[1] != undefined) {
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                    }
+                    
+                    if (nodo.hijos[2] != undefined) {
+                        hijos.push(recorrer(nodo.hijos[2],conExpresiones));
+                    }
+
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
+                case TipoInstruccion.Sino:                                      //se espera la estructura -> hijos: Terminal(SINO) [, Instrucciones]
+                    objetoNodo["name"] = "Sino"
+                    if (nodo.hijos[1] != undefined) {
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                    }
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
                 default:
-                    retornoString += "(ERROR";
+                    objetoNodo["name"] = "ERROR"
                     break;
             }
-            retornoString += ")\n"
             
         } else if (nodo instanceof NodoExpresion) {
-            
-            retornoString = "(Expresion:\n";
-            switch (nodo.operador) {
-                case TipoExpresionMatematica.Suma:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "+" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionMatematica.Resta:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "-" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionMatematica.Multiplicacion:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "*" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionMatematica.Division:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "/" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionMatematica.Modulo:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "%" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionMatematica.Potencia:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "^" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionMatematica.Grupo:
-                    retornoString += "[(" + interpretar(nodo.hijos[0]) + ")]";
-                    break;
-                case TipoExpresionMatematica.MenosUnitario:
-                    retornoString += "[-" + interpretar(nodo.hijos[0])+"]";
-                    break;
-                case TipoExpresionRelacional.MayorQue:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + ">" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionRelacional.MenorQue:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "<" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionRelacional.MayorIgualQue:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + ">=" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionRelacional.MenorIgualQue:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "<=" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionRelacional.Igualdad:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "==" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionRelacional.Diferencia:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "!=" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionRelacional.Incerteza:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "~" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionLogica.And:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "&&" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionLogica.Or:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "||" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionLogica.Xor:
-                    retornoString += "["+interpretar(nodo.hijos[0]) + "|&" + interpretar(nodo.hijos[1])+"]";
-                    break;
-                case TipoExpresionLogica.Not:
-                    retornoString += "[!" + interpretar(nodo.hijos[0])+"]";
-                    break;
-                default:
-                    retornoString += "ERROR";
-                    break;
+            if(conExpresiones){
+                switch (nodo.operador) {
+                    case TipoExpresionMatematica.Suma:
+                        objetoNodo["name"] = "+";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionMatematica.Resta:
+                        objetoNodo["name"] = "-";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionMatematica.Multiplicacion:
+                        objetoNodo["name"] = "*";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionMatematica.Division:
+                        objetoNodo["name"] = "/";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionMatematica.Modulo:
+                        objetoNodo["name"] = "%";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionMatematica.Potencia:
+                        objetoNodo["name"] = "^";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionMatematica.Grupo:
+                        objetoNodo["name"] = "( )";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionMatematica.MenosUnitario:
+                        objetoNodo["name"] = "-";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionRelacional.MayorQue:
+                        objetoNodo["name"] = ">";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionRelacional.MenorQue:
+                        objetoNodo["name"] = "<";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionRelacional.MayorIgualQue:
+                        objetoNodo["name"] = ">=";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionRelacional.MenorIgualQue:
+                        objetoNodo["name"] = "<=";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionRelacional.Igualdad:
+                        objetoNodo["name"] = "==";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionRelacional.Diferencia:
+                        objetoNodo["name"] = "!=";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionRelacional.Incerteza:
+                        objetoNodo["name"] = "~";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionLogica.And:
+                        objetoNodo["name"] = "&&";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionLogica.Or:
+                        objetoNodo["name"] = "||";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionLogica.Xor:
+                        objetoNodo["name"] = "|&";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    case TipoExpresionLogica.Not:
+                        objetoNodo["name"] = "!";
+                        hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                        objetoNodo["childs"] = hijos; 
+                        return objetoNodo;
+                    default:
+                        objetoNodo["name"] = "ERROR";
+                        return objetoNodo;
+                }
+            } else {
+                objetoNodo["name"] = "Expresion"
+                return objetoNodo;                    
             }
             
-            retornoString += ")\n";
 
         } else if (nodo instanceof NodoNoTerminal) {
 
             switch (nodo.tipoNoTerminal) {
                 case TipoNoTerminal.Identificadores:                            //se espera estructura -> hijos: Terminal(Token(Identificador)),...,Terminal(Token(Identificador))
+                    objetoNodo["name"] = "Identificadores";
                     nodo.hijos.forEach(hijo => {
-                        retornoString += "("+(hijo as Terminal).token.lexema+")"
+                        hijos.push(recorrer(hijo,conExpresiones));
                     });
-                    break;
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
                 case TipoNoTerminal.DeclaracionParametros:                      //se espera estructura -> hijos: [NodoNoTerminal(DeclaracionParametro),...,NodoNoTerminal(DeclaracionParametro)]
+                    objetoNodo["name"] = "Declaracion Parametros";
                     nodo.hijos.forEach(hijo => {
-                        retornoString += interpretar(hijo)+",";
+                        hijos.push(recorrer(hijo,conExpresiones));
                     });
-                    break;
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
                 case TipoNoTerminal.DeclaracionParametro:                       //Se espera estructura -> hijos: TerminalTipoDato(TipoDato), Terminal(Identificador)
-                    let tipoParametro = interpretar(nodo.hijos[0]);
-                    let identificadorParametro = interpretar(nodo.hijos[1]);
-                    retornoString += "("+tipoParametro+"|"+identificadorParametro+")";
-                    break;
+                    objetoNodo["name"] = "Declaracion Parametro";
+                    let tipoParametro = recorrer(nodo.hijos[0],conExpresiones);
+                    let identificadorParametro = recorrer(nodo.hijos[1],conExpresiones);
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
                 case TipoNoTerminal.Instrucciones:
+                    objetoNodo["name"] = "Instrucciones";
                     nodo.hijos.forEach(hijo => {
-                        retornoString += interpretar(hijo);
+                        hijos.push(recorrer(hijo,conExpresiones));
                     });
-                    retornoString += "\n";
-                    break;
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
                 case TipoNoTerminal.Parametros:                                 //se espera estructura -> hijos: NodoExpresion|Terminal,...,NodoExpresion|Terminal
+                    objetoNodo["name"] = "Parametros";
                     nodo.hijos.forEach(hijo => {
-                        retornoString += "(Parametro:"+interpretar(hijo)+")"
+                        hijos.push(recorrer(hijo,conExpresiones));
                     });
-                    break;
-                case TipoNoTerminal.Instrucciones:
-                    console.log(nodo);
-                    nodo.hijos.forEach(hijo => {
-                        retornoString += "(Instruccion:"+interpretar(hijo)+")"
-                    });
-                    break;
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
+                case TipoNoTerminal.ParametrosMostrar:
+                    objetoNodo["name"] = "Parametros Mostrar";
+                    let stringMostrar = recorrer(nodo.hijos[0],conExpresiones);
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    let parametros = "[";
+                    for (let i = 1; i < nodo.hijos.length; i++) {
+                        const hijo = nodo.hijos[i];
+                        parametros += "{"+(i-1)+":"+recorrer(hijo,conExpresiones);+"}";
+                        hijos.push(recorrer(hijo,conExpresiones));
+                    }
+                    parametros += "]";
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
                 case TipoNoTerminal.CondicionInicialPara:
-                    let identificadorPara = interpretar(nodo.hijos[0]);
-                    let valorAsignado = interpretar(nodo.hijos[1]);
-                    retornoString += "Identificador:"+identificadorPara+"|Valor:"+valorAsignado;
-                    break;
+                    objetoNodo["name"] = "Condicion Inicial Para";
+                    hijos.push(recorrer(nodo.hijos[0],conExpresiones));
+                    hijos.push(recorrer(nodo.hijos[1],conExpresiones));
+                    objetoNodo["childs"] = hijos;
+                    return objetoNodo;
                 default:
-                    retornoString += "ERROR";
                     break;
             }
             
         } else {
-            retornoString = "ERROR";
+            return {name: "ERROR"}
         } 
             
     } else if (nodo instanceof Terminal) {
         if (nodo instanceof TerminalTipoDato) {
             if (TipoDato[nodo.tipoDato] === nodo.token.lexema) {
-                return "Tipo:"+TipoDato[nodo.tipoDato];
+                objetoNodo["name"] = TipoDato[nodo.tipoDato]
+                objetoNodo["childs"] = hijos;
+                return objetoNodo;
             } else {
-                return "Tipo:"+TipoDato[nodo.tipoDato]+"|Lexema:"+nodo.token.lexema;
+                objetoNodo["name"] = nodo.token.lexema+" | "+TipoDato[nodo.tipoDato]
+                objetoNodo["childs"] = hijos;
+                return objetoNodo;
             }
         } else if (nodo instanceof Terminal) {
-            return "Identificador:"+nodo.token.lexema;
+            objetoNodo["name"] = "Terminal"
+            hijos.push({name: nodo.token.lexema})
+            objetoNodo["childs"] = hijos;
+            return objetoNodo;
         } else {
-            retornoString = "ERROR";
+            return {name: "ERROR"}
         }
         
     } else {
-        retornoString = "ERROR";
+        return {name: "ERROR"}
     }
-    
-    return retornoString;
 }
 
-class Nodo{
+export class Nodo{
     hijos: (Nodo|Terminal)[];   
     
     constructor(){
@@ -575,8 +813,8 @@ class Nodo{
     }
 }
 
-class NodoRaiz extends Nodo{}
-class NodoInstruccion extends Nodo{
+export class NodoRaiz extends Nodo{}
+export class NodoInstruccion extends Nodo{
     tipoInstruccion: TipoInstruccion;
 
     constructor(tipoInstruccion: TipoInstruccion){
@@ -585,7 +823,7 @@ class NodoInstruccion extends Nodo{
     }
 }
 
-class NodoExpresion extends Nodo{
+export class NodoExpresion extends Nodo{
     operador: TipoExpresionMatematica | TipoExpresionRelacional | TipoExpresionLogica;
     
     constructor(operador: TipoExpresionMatematica | TipoExpresionRelacional | TipoExpresionLogica, expresiones: (NodoExpresion|NodoNoTerminal|Terminal)[] ){
@@ -597,7 +835,7 @@ class NodoExpresion extends Nodo{
     }
 }
 
-class NodoNoTerminal extends Nodo{
+export class NodoNoTerminal extends Nodo{
     tipoNoTerminal: TipoNoTerminal;
 
     constructor(tipoNoTerminal: TipoNoTerminal){
@@ -606,7 +844,7 @@ class NodoNoTerminal extends Nodo{
     }
 }
 
-class Terminal {
+export class Terminal {
     token: Token
 
     constructor(token: Token){
@@ -614,7 +852,7 @@ class Terminal {
     }
 }
 
-class TerminalTipoDato extends Terminal{
+export class TerminalTipoDato extends Terminal{
     tipoDato: TipoDato;
 
     constructor(token: Token, tipoDato: TipoDato){
@@ -624,7 +862,7 @@ class TerminalTipoDato extends Terminal{
 }
 
 //Cada tipo tiene asignada un booleano que indica si puede tener mas instrucciones dentro o no
-enum TipoInstruccion{
+export enum TipoInstruccion{
     //Instrucciones que NO pueden tener mas instrucciones anidadas 0-11
     Importacion,
     Incerteza,
@@ -647,19 +885,21 @@ enum TipoInstruccion{
     Para,
 }
 
-enum TipoNoTerminal{
+export enum TipoNoTerminal{
     Parametros,    
     Identificadores,
     DeclaracionParametro,
     DeclaracionParametros,
     CondicionInicialPara,
     
-    Instrucciones
+    Instrucciones,
+    
+    ParametrosMostrar
 }
 
 
-enum TipoDato{
-    Int,    //0
+export enum TipoDato{
+    Int,        //0
     Double,     //1
     String,     //2
     Char,       //3
@@ -667,7 +907,7 @@ enum TipoDato{
     Void        //5
 }
 
-enum TipoExpresionMatematica{
+export enum TipoExpresionMatematica{
     Suma="SUMA",                        //Se espera -> expresion SUMA expresion
     Resta="RESTA",                      //Se espera -> expresion RESTA expresion
     Multiplicacion="MULTIPLICACION",    //Se espera -> expresion MULTIPLICACION expresion
@@ -678,7 +918,7 @@ enum TipoExpresionMatematica{
     Grupo="GRUPO"                       //Se espera -> PAR_IZQ expresion PAR_DER
 }
 
-enum TipoExpresionRelacional{
+export enum TipoExpresionRelacional{
     MayorQue="MAYOR_QUE",               //Se espera -> expresion MAYOR_QUE expresion
     MenorQue="MENOR_QUE",               //Se espera -> expresion MENOR_QUE expresion
     MayorIgualQue="MAYOR_IGUAL_QUE",    //Se espera -> expresion MAYOR_IGUAL_QUE expresion
@@ -688,7 +928,7 @@ enum TipoExpresionRelacional{
     Incerteza="INCERTEZA"               //Se espera -> expresion INCERTEZA expresion
 }
 
-enum TipoExpresionLogica{
+export enum TipoExpresionLogica{
     And="AND",      //Se espera -> expresion AND expresion
     Xor="XOR",      //Se espera -> expresion XOR expresion
     Or="OR",        //Se espera -> expresion OR expresion

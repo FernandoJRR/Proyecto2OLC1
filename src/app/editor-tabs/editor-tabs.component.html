@@ -1,0 +1,25 @@
+<div>
+  <button mat-raised-button
+          class="button-editor"
+          (click)="agregarTab(true)">
+    Nueva Tab
+  </button>
+  <button mat-raised-button
+          class="button-editor"
+        [disabled]="tabs.length === 1"
+        (click)="deleteTab()">
+    Borrar Tab
+  </button>
+  <button mat-raised-button
+          class="button-editor"
+          (click)="cambiarNombre()">
+    Cambiar Nombre Tab
+  </button>
+</div>
+
+<mat-tab-group [selectedIndex]="selected.value" (selectedIndexChange)="selected.setValue($event)">
+  <mat-tab *ngFor="let tab of tabs; let index = index" [label]="tab.label">
+    <ngx-codemirror [(ngModel)]="tab.content"[options]="{lineNumbers: true, theme: 'material',mode: 'crl'}" #contenido_programa>
+    </ngx-codemirror>
+  </mat-tab>
+</mat-tab-group>

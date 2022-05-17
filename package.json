@@ -23,6 +23,8 @@
     "@ctrl/ngx-codemirror": "^5.1.1",
     "codemirror": "^5.65.3",
     "fs": "^0.0.1-security",
+    "html2canvas": "^1.4.1",
+    "ngx-org-chart": "^1.1.1",
     "path": "^0.12.7",
     "rxjs": "~7.5.0",
     "tslib": "^2.3.0",

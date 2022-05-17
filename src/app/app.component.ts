@@ -1,13 +1,22 @@
-import { Component } from '@angular/core';
-import { FormControl, FormsModule, NgModel } from '@angular/forms';
+import { Component, ElementRef, Inject, ViewChild } from '@angular/core';
+import { Form, FormControl, FormsModule, NgModel } from '@angular/forms';
 import * as CodeMirror from 'codemirror';
 import { ErrorList } from "./services/parser/manejo_error/ErrorList";
 import { AST, UtilidadesAST } from "./services/parser/ast/AST";
 
 import "codemirror/addon/mode/simple"
+import { SemanticAnalyzer } from './services/parser/interpreter/SemanticAnalyzer';
+import { TablaDeSimbolos } from './services/parser/tabla_de_simbolos/TablaDeSimbolos';
+import { Interpreter } from './services/parser/interpreter/Interpreter';
+import html2canvas from 'html2canvas';
+import { EditorTabsComponent } from './editor-tabs/editor-tabs.component';
+import { MatDialog, MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
 
 declare var require: NodeRequire;
 
+export interface DialogFile {
+  file: any;
+}
 
 @Component({
   selector: 'app-root',
@@ -17,13 +26,69 @@ declare var require: NodeRequire;
 export class AppComponent {
   title = 'Proyecto2OLC1-app';
   
-  area_codigo = new FormControl('');
+  area_programa = new FormControl('');
+  area_interprete = new FormControl('');
   content = {};  
   
-  constructor(){
-    this.area_codigo.disabled
-    this.content = "";
+  listaASTFunciones: any = []
+  
+  datosTablas: any = []
+  columnasTabla: string[] = ["item","contenido"]
+  expresionesDibujo: any = []
+  
+
+  @ViewChild('astCanvas') ast!: ElementRef;
+  @ViewChild('linkDescargaAST') linkDescargaAST!: ElementRef;
+  @ViewChild('expresionesCanvas') expresiones!: ElementRef;
+  @ViewChild('linkDescargaExpresiones') linkDescargaExpresiones!: ElementRef;
+  @ViewChild('tablasCanvas') tablas!: ElementRef;
+  @ViewChild('linkDescargaExpresiones') linkDescargaTablas!: ElementRef;
+
+  @ViewChild('editorTabs') editorTabs!: EditorTabsComponent;
+
+  constructor(public dialogCarga: MatDialog){
+    this.area_programa.disabled
+    this.area_interprete.disabled
   }
+  
+  cargarArchivo(){
+    const dialogRef = this.dialogCarga.open(DialogCargarArchivo, {
+      width: '20%',
+      data: {file: ""},
+    });
+
+    dialogRef.afterClosed().subscribe(result => {
+      if (result[1] == 'OK') {
+        let fileReader = new FileReader();
+        fileReader.onload = (e) => {
+          this.editorTabs.agregarTab(true, result[0].name, fileReader.result as string);
+        }
+        fileReader.readAsText(result[0]);
+      }
+    });
+  }
+  
+  descargarArchivo(){
+      var textFileAsBlob = new Blob([this.editorTabs.tabs[this.editorTabs.selected.value]["content"]], {type:'text/plain'}); 
+    	var downloadLink = document.createElement("a");
+    	downloadLink.download = this.editorTabs.tabs[this.editorTabs.selected.value]["label"];
+    	downloadLink.innerHTML = "Download File";
+    	if (window.webkitURL != null){
+    		// Chrome allows the link to be clicked
+    		// without actually adding it to the DOM.
+    		downloadLink.href = window.webkitURL.createObjectURL(textFileAsBlob);
+    	} else {
+    		// Firefox requires the link to be added to the DOM
+    		// before it can be clicked.
+    		downloadLink.href = window.URL.createObjectURL(textFileAsBlob);
+    		downloadLink.onclick = destroyComponente;
+    		downloadLink.style.display = "none";
+    		document.body.appendChild(downloadLink);
+    	}
+
+    	downloadLink.click();
+  }
+  
 
   manejoTab(event:any) {
       if (event.key == 'Tab') {
@@ -34,10 +99,41 @@ export class AppComponent {
           event.target.selectionStart = event.target.selectionEnd = start + 1;
       }
   }
+
+  descargarAST(){
+    html2canvas(this.ast.nativeElement).then(canvas => {
+      this.linkDescargaAST.nativeElement.href = canvas.toDataURL('image/png');
+      this.linkDescargaAST.nativeElement.download = 'ast_dibujo.png';
+      this.linkDescargaAST.nativeElement.click();
+    })
+  }
+
+  descargarTablas(){
+    html2canvas(this.tablas.nativeElement).then(canvas => {
+      this.linkDescargaTablas.nativeElement.href = canvas.toDataURL('image/png');
+      this.linkDescargaTablas.nativeElement.download = 'tablas_dibujo.png';
+      this.linkDescargaTablas.nativeElement.click();
+    })
+  }
+
+  descargarExpresiones(){
+    html2canvas(this.expresiones.nativeElement).then(canvas => {
+      this.linkDescargaExpresiones.nativeElement.href = canvas.toDataURL('image/png');
+      this.linkDescargaExpresiones.nativeElement.download = 'expresiones_dibujo.png';
+      this.linkDescargaExpresiones.nativeElement.click();
+    })
+  }
   
-  compilar(contenido: string){
+  compilar(){
+    let contenido = this.editorTabs.tabs[this.editorTabs.selected.value]["content"];
+    let controlConsola = new ControlConsola(this.area_interprete);
+    let controlOutput = new ControlConsola(this.area_programa);
+    this.listaASTFunciones = []
+    this.datosTablas = []
+    this.expresionesDibujo = []
+
     //Se limpia la consola de su anterior uso
-    this.limpiarOutput();
+    controlConsola.limpiarOutput();
     
     //Se invoca una instancia del parser
     const parser = require("./services/parser/crl_parser.js")
@@ -55,31 +151,90 @@ export class AppComponent {
     }
     
     //Se imprimer informacion
-    this.agregarOutputResaltado("Realizando Compilacion");
+    controlConsola.agregarOutputResaltado("Realizando Analisis");
     
-    //Se parsea el contenido
-    parser.parser.parse(contenido);
+    try{
+      //Se parsea el contenido
+      parser.parser.parse(contenido);
+    } catch(error) {
+      listadoErrores.agregarErrorParametros("EOF",0,0,"Error irrecuperable encontrado o comentario sin cerrar al final del archivo");
+    }
     
     if (listadoErrores.errores.length > 0) {
-      this.agregarOutput("Se encontraron los siguientes errores:", true);
+      controlConsola.agregarOutput("Se encontraron los siguientes errores lexicos y sintacticos:", true);
       listadoErrores.errores.forEach(error => {
-        this.agregarOutput(error.toString(), false);
+        controlConsola.agregarOutput(error.toString(), false);
       });
-      this.agregarOutputResaltado("Compilacion Fallida");
+    } 
+    controlConsola.agregarOutput("AST Generado",true);
+    let nodosAST = []
+    nodosAST.push(ast.obtenerRecorrido());
+    
+    //Se realiza el analisis semantico
+    listadoErrores = new ErrorList();
+    controlConsola.agregarOutput("Realizando Analisis Semantico",true);
+    
+    let tablaSimbolos = new TablaDeSimbolos();
+    let analizadorSemantico = new SemanticAnalyzer(ast, tablaSimbolos, listadoErrores);
+    analizadorSemantico.analizarAST();
+    controlConsola.agregarOutputResaltado("Analisis Semantico Finalizado");
+    if (listadoErrores.errores.length > 0) {
+      controlConsola.agregarOutput("Se encontraron los siguientes errores:", true);
+      listadoErrores.errores.forEach(error => {
+        controlConsola.agregarOutput(error.toString(), false);
+      });
     } else {
-      this.agregarOutputResaltado("Compilacion Exitosa");
+      controlConsola.agregarOutputResaltado("Analisis Semantico Exitoso");
     }
 
-    this.agregarOutput("AST obtenido",true);
-    this.agregarOutput(ast.obtenerRecorrido(),false);
-  }
-  
-  agregarOutput(nuevoOutput: string, indentacion: boolean){
-    var textoActual = this.area_codigo.value;
-    if (indentacion) {
-      this.area_codigo.setValue(textoActual+">>>"+nuevoOutput+"\n");
+    console.log(tablaSimbolos)
+    
+    //En caso de que no existan errores se realizara la interpretacion, caso contrario no se hara
+    if (listadoErrores.errores.length == 0) {
+      controlConsola.agregarOutputResaltado("Iniciando Interpretacion");
+      listadoErrores = new ErrorList();
+      
+      controlOutput.limpiarOutput();
+      let interprete = new Interpreter(ast, tablaSimbolos, controlOutput, listadoErrores, [this.listaASTFunciones,this.datosTablas,this.expresionesDibujo]);
+      interprete.interpretar_ast();
+      console.log("funcionesast")
+      console.log(this.listaASTFunciones)
+      
+      if (listadoErrores.errores.length > 0) {
+        controlConsola.agregarOutput("Se encontraron los siguientes errores:", true);
+        listadoErrores.errores.forEach(error => {
+          controlConsola.agregarOutput(error.toString(), false);
+        });
+      } else {
+        controlConsola.agregarOutputResaltado("Interpretacion Exitosa");
+      }
+
     } else {
-      this.area_codigo.setValue(textoActual+nuevoOutput+"\n");
+            
+    }
+
+    console.log(tablaSimbolos);
+  }
+
+
+}
+
+function destroyComponente(e: any){
+    document.body.removeChild(e.target);
+  }
+export class ControlConsola{
+  consola: FormControl;
+  
+  constructor(consola: FormControl){
+    this.consola = consola;
+  }
+
+  agregarOutput(nuevoOutput: string, indentacion: boolean){
+    var textoActual = this.consola.value;
+    if (indentacion) {
+      this.consola.setValue(textoActual+">>>"+nuevoOutput+"\n");
+    } else {
+      this.consola.setValue(textoActual+nuevoOutput+"\n");
     }
   }
   
@@ -88,50 +243,25 @@ export class AppComponent {
   }
   
   limpiarOutput(){
-    this.area_codigo.setValue('');
+    this.consola.setValue('');
   }
 }
 
-CodeMirror.defineSimpleMode("clr", {
- // The start state contains the rules that are initially used
-  start: [
+@Component({
+  selector: 'cargar-archivo',
+  templateUrl: './cargar-archivo.html',
+})
+export class DialogCargarArchivo {
+constructor(
+    public dialogRef: MatDialogRef<DialogCargarArchivo>,
+    @Inject(MAT_DIALOG_DATA) public data: DialogFile,
+  ) {}
+  
+  procesarSeleccion(event: any){
+    this.data.file = event.target!.files[0]   
+  }
 
-    {regex: /!!.*/, token: "comment"},
-
-    // A next property will cause the mode to move to a different state
-    {regex: /'''/, token: "comment", next: "comment"},
-
-    // The regex matches the token, the token property contains the type
-    {regex: /"(?:[^\\]|\\.)*?(?:"|$)/, token: "string"},
-    // You can match multiple tokens at once. Note that the captured
-    // groups must span the whole string in this case
-    {regex: /(function)(\s+)([a-z$][\w$]*)/,
-     token: ["keyword", "", "variable-2"]},
-     
-    // Rules are matched in the order in which they appear, so there is
-    // no ambiguity between this one and the one above
-    {regex: /(?:Int|Void|String|Retorno|Continuar|Para|Mientras|Si|Sino|Detener|Boolean|Char|Double|Mostrar|Importar|Incerteza)\b/,
-     token: "keyword"},
-    {regex: /true|false/, token: "atom"},
-    {regex: /0x[a-f\d]+|[-+]?(?:\.\d+|\d+\.?\d*)/,
-     token: "number"},
-    {regex: /\/\/.*/, token: "comment"},
-    {regex: /\/(?:[^\\]|\\.)*?\//, token: "variable-3"},
-
-    {regex: /[-+\/*=<>!]+/, token: "operator"},
-
-    // indent and dedent properties guide autoindentation
-    //{regex: /[\{\[\(]/, indent: false},
-    //{regex: /[\}\]\)]/, dedent: false},
-    {regex: /[a-z$][\w$]*/, token: "variable"},
-    
-    // You can embed other modes with the mode property. This rule
-    // causes all code between << and >> to be highlighted with the XML
-    // mode.
-  ],
-  // The multi-line comment state.
-  comment: [
-    {regex: /.*?'''/, token: "comment", next: "start"},
-    {regex: /.*/, token: "comment"}
-  ],
-});
+  onNoClick(): void {
+    this.dialogRef.close();
+  }
+}

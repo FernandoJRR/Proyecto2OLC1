@@ -1,0 +1,9 @@
+<h1 mat-dialog-title>Cargar Archivo</h1>
+<div mat-dialog-content>
+  <p>Elige un Archivo para cargarlo al editor</p>
+  <input type="file" (change)="procesarSeleccion($event)">
+</div>
+<div mat-dialog-actions>
+  <button mat-button (click)="onNoClick()">Cancelar</button>
+  <button mat-button [mat-dialog-close]="[data.file,'OK']" cdkFocusInitial>Cargar</button>
+</div>

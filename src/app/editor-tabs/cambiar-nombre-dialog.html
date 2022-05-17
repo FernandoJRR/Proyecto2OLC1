@@ -1,0 +1,12 @@
+<h1 mat-dialog-title>Cambiar Nombre de Tab</h1>
+<div mat-dialog-content>
+  <p>Elige un nuevo nombre para la Tab</p>
+  <mat-form-field appearance="fill" style="width: 100%;">
+    <mat-label>Nombre</mat-label>
+    <input matInput [(ngModel)]="data.name">
+  </mat-form-field>
+</div>
+<div mat-dialog-actions>
+  <button mat-button (click)="onNoClick()">Cancelar</button>
+  <button mat-button [mat-dialog-close]="[data.name,'OK']" cdkFocusInitial>Cambiar</button>
+</div>

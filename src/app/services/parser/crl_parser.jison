@@ -18,6 +18,7 @@ var indentaciones_continuas = 0;
 var cuerpo_actual_funcion = "";
 var instrucciones_funcion_actual = [];
 
+var esPrimerInstruccion = true;
 %}
 
 /* Lexer */
@@ -80,7 +81,7 @@ digit = [0-9]
 
 letter = [a_zA_Z]
 identifier = ([a-zA-Z])[a-zA-Z0-9_]*
-comment         = "!!".*
+comentario         = "!!".*
 whitespace      = [ \n\t]
 indentacion = \t | "    "
 
@@ -94,15 +95,20 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
 
 %%
 
-"'''"											this.pushState("comentario_multilinea");
-<comentario_multilinea>"'''"					this.popState(); console.log("Comentario multilinea"); // Comentario de multiples líneas
-<comentario_multilinea>\'						//this.popState(); console.log("Comentario multilinea"); // Comentario de multiples líneas
+//{indentacion}+."'''"								this.pushState("comentario_multilinea"); indentaciones_continuas = 0; console.log("indentacion "+indentaciones_continuas)
+"'''"											this.pushState("comentario_multilinea"); indentaciones_continuas = 0;
+<comentario_multilinea>"'''"					this.popState(); console.log("Comentario multilinea "+indentaciones_continuas); // Comentario de multiples líneas
+<comentario_multilinea><<EOF>>					this.popState();agregarErrorLexico("Fin de archivo en comentario sin cerrar"); return 'DEDENT_EOF';
+<comentario_multilinea>\'						// Comentario de multiples líneas
 <comentario_multilinea>[^']*					//Ignora el comentario 
 
-{comment}       { console.log("comentario: " + yytext); } //Se imprime comentario
 
-{identifier}".clr" return returnToken('NOMBRE_ARCHIVO');
-{identifier}".".* { agregarErrorLexico("El nombre del archivo no tiene extension '.clr' "); return returnToken('NOMBRE_ARCHIVO'); }
+{comentario}       %{ console.log("comentario: " + yytext);  //Se imprime comentario
+%}
+
+
+{identifier}".crl" return returnToken('NOMBRE_ARCHIVO');
+{identifier}".".* { agregarErrorLexico("El nombre del archivo no tiene extension '.crl' "); return returnToken('NOMBRE_ARCHIVO'); }
 
 // Palabras Reservadas
 
@@ -110,7 +116,7 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
 "Incerteza" return returnToken('R_INCERTEZA');
 "Mostrar"  return returnToken('R_MOSTRAR');
 "DibujarAST"  return returnToken('R_D_AST');
-"DibujarExp" return returnToken('R_D_EXP');
+"DibujarEXP" return returnToken('R_D_EXP');
 "DibujarTS"  return returnToken('R_D_TS');
 "Retorno"   return returnToken('R_RETORNO')
 "Detener"   return returnToken('R_DETENER')
@@ -447,7 +453,7 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
     return 'BOOLEAN';
 %}
 
-{indentacion}+{SALTO} {/*se ignora*/}
+{indentacion}+{comentario}?{SALTO} {/*se ignora*/}
 
 {SALTO} %{ 
 	
@@ -514,16 +520,44 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
 <char_estado>\\t                 this.charBuffer.push("\t");console.log("escape:t");
 <char_estado>\\r                 this.charBuffer.push("\r");console.log("escape:r");
 <char_estado>\'                  yytext = this.charBuffer.join(''); this.popState(); indentaciones_continuas = 0;return 'CHAR';
+<char_estado>\n                  agregarErrorLexico("Salto de linea en Char"); this.popState(); indentaciones_continuas = 0;return 'SALTO';
+<char_estado>.                   agregarErrorLexico("Caracter/es no definidos");
+<char_estado><<EOF>>             %{
+        agregarErrorLexico("EOF en definicion de Char");
+        console.log("eof detectado");
+        if(stack.length===0) { 
+            console.log("eof retornado");indentaciones_continuas = 0;
+            return 'EOF';
+        } else {
+            console.log("eof dedenta");
+            stack.pop();
+            return 'DEDENT_EOF';
+        }
+    %}
+
 
 \"                              this.stringBuffer = []; this.pushState('string_estado');
-
 <string_estado>[^\\"\n]+        this.stringBuffer.push(yytext);
 <string_estado>\\n              this.stringBuffer.push("\n");
 <string_estado>\\r              this.stringBuffer.push("\r");
 <string_estado>\\t              this.stringBuffer.push("\t");
 <string_estado>\"               yytext = this.stringBuffer.join(''); this.pushState('INITIAL'); indentaciones_continuas = 0;console.log("cadena");return 'STRING';
-<string_estado>\n               agregarErrorLexico("Salto de linea en string"); this.popState(); indentaciones_continuas = 0;return 'SALTO';
+<string_estado>\n               agregarErrorLexico("Salto de linea en String"); this.popState(); indentaciones_continuas = 0;return 'SALTO';
+<string_estado>.                agregarErrorLexico("Caracter/es no definidos");
+<string_estado><<EOF>>          %{
+        agregarErrorLexico("EOF en definicion de String");
+        console.log("eof detectado");
+        if(stack.length===0) { 
+            console.log("eof retornado");indentaciones_continuas = 0;
+            return 'EOF';
+        } else {
+            console.log("eof dedenta");
+            stack.pop();
+            return 'DEDENT_EOF';
+        }
+    %}
 
+.   { indentaciones_continuas = 0;agregarErrorLexico("Caracter/es no definidos"); }
 <<EOF>>		%{ 
         console.log("eof detectado");
         if(stack.length===0) { 
@@ -536,7 +570,6 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
         }
 %}
 
-.   { indentaciones_continuas = 0;agregarErrorLexico("Caracter/es no definidos"); }
 	                   
 //Si hay varias indentaciones seguidas el numero de estas aumenta pero se mantiene el estado de indentacion
 <indentacion_estado>{indentacion} 	{ this.num_tab++; console.log("Indentacion aumentada")} 
@@ -652,6 +685,7 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
 	
     //Se ingresa la declaracion de una funcion sin sus posibles instrucciones internas, para estructurarlas
 	function declararFuncion(declaracion_sin_cuerpo){
+
 		//Se limpia el stack de instrucciones agregandolas a la funcion
 		consumirStack(0);
         
@@ -660,7 +694,7 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
         //Se comprueba si existen instrucciones que anidar dentro de la funcion
         if(instrucciones_funcion_actual.length > 0){
             //Se crea el nodo no terminal con las instrucciones internas de la funcion
-            let nodoInstrucciones = Parser.yy.utilidades.nuevasInstrucciones(instrucciones_funcion_actual);
+            let nodoInstrucciones = Parser.yy.utilidades.nuevasInstrucciones(instrucciones_funcion_actual, Parser.yy.listaErrores);
             declaracion_sin_cuerpo.agregarHijo(nodoInstrucciones);
         } 
         
@@ -688,6 +722,15 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
         console.log("\nErrores Encontrados:");
         console.log(Parser.yy.listaErrores.toString());
     }
+    
+    function agregarPrimeraInstruccion(instruccion){
+        if(instruccion.tipoInstruccion == 14){
+            agregarErrorSintactico("SINO", Parser.yy.utilidades.obtenerLineaNodo(instruccion), 0, "La instruccion SINO debe estar asociada a una instruccion SI");
+        }
+
+        stack_instrucciones.push(instruccion); 
+        indentaciones_anteriores.push(indentacion_actual);
+    }
 	
 	//Se decide que hacer con la instruccion obtenida mas reciente dependiendo de su indentacion
 	function accionStack(instruccion){
@@ -699,12 +742,23 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
 		let indentacion_anterior = indentaciones_anteriores[indentaciones_anteriores.length - 1];
 
 		if ( indentacion_actual > indentacion_anterior ) { //En caso de que la indentacion de la instruccion obtenida sea mayor que la de la anterior
+            if(instruccion.tipoInstruccion == 14){
+                agregarErrorSintactico("SINO", Parser.yy.utilidades.obtenerLineaNodo(instruccion), 0, "La instruccion SINO debe estar asociada a una instruccion SI");
+            }
 
 			//Se agrega la instruccion y su indentacion al stack
 			stack_instrucciones.push(instruccion);
 			indentaciones_anteriores.push(indentacion_actual);
 
 		} else if ( indentacion_actual === indentacion_anterior ) { //En caso de que la indentacion de la instruccion sea igual al de la instruccion anterior
+        //NOTA: es necesario tomar el cuenta el caso especial de la instruccion SI, ya que esta puede esperar la instruccion SINO en la misma indentacion
+
+            //Si la instruccion es un SINO con un SI anterior a ese se integrara el SINO dentro del SI y no se sacara al SI del stack
+            if(stack_instrucciones[stack_instrucciones.length-1].tipoInstruccion==13 && instruccion.tipoInstruccion==14){
+                console.log("Si y sino juntos")
+            } else if(stack_instrucciones[stack_instrucciones.length-1].tipoInstruccion!=13 && instruccion.tipoInstruccion == 14){
+                agregarErrorSintactico("SINO", Parser.yy.utilidades.obtenerLineaNodo(instruccion), 0, "La instruccion SINO debe estar asociada a una instruccion SI");
+            }
 
 			//La instruccion anterior es agregada a su instruccion padre
             //Se comprueba si la instruccion padre es una declaracion de funcion
@@ -746,14 +800,13 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
 			
 		} else if ( indentacion_actual < indentacion_anterior ) {   //En caso de que la indentacion de la instruccion obtenida sea menor a la de la anterior
             //console.log("indentacion menor: consumir stack");
+        
+            //Se consume el stack hasta que se encuente una instruccion con la misma indentacion o hasta vaciar el stack
+            consumirStack(indentacion_actual);
 
-			//Se consume el stack hasta que se encuente una instruccion con la misma indentacion o hasta vaciar el stack
-			consumirStack(indentacion_actual);
-			
-			//Se pone en el stack la instruccion actual
-			stack_instrucciones.push(instruccion);
+            //Se pone en el stack la instruccion actual
+            stack_instrucciones.push(instruccion);
             indentaciones_anteriores.push(indentacion_actual);
-
 		}
 		
 	}
@@ -769,7 +822,7 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
         //Se comprueba si la instruccion puede tener instrucciones anidadas, instrucciones 12-16
         if(tipoInstruccion >= 12 && tipoInstruccion <= 16){
             console.log("pasa");
-            padre = Parser.yy.utilidades.agregarInstruccionAPadreInstruccion(padre, hijo);
+            padre = Parser.yy.utilidades.agregarInstruccionAPadreInstruccion(padre, hijo, Parser.yy.listaErrores);
             console.log("Padre post")
             console.log(padre);
         } else {
@@ -780,12 +833,14 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
 	
     //Se consume el stack hasta que se encuentre una instruccion con la indentacion buscada
 	function consumirStack(indentacionBuscada){
+        /*
         console.log("indentacionbuscada "+indentacionBuscada);
         console.log("stack");
         console.log(stack_instrucciones);
         console.log("indentaciones anteriorres");
         console.log(indentaciones_anteriores);
         console.log(indentaciones_anteriores.length);
+        */
 
         //Se guarda la indentacion mas reciente en el stack
 		let temp_indentacion_actual = indentaciones_anteriores[indentaciones_anteriores.length - 1];			
@@ -795,56 +850,59 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
         console.log(temp_indentacion_actual);
         */
 
+
+
         //Se consumira el stack hasta que se encuentre una indentacion igual a la que se busca o se acabe el stack  
         //Las instrucciones encontradas seran instroducidas en su instruccion padre (si es posible) en el proceso
 		while( ( temp_indentacion_actual >= indentacionBuscada ) && ( stack_instrucciones.length > 0 ) ) {
 
-			//La instruccion anterior es agregada a su instruccion padre  (implica que el stack esta a punto de vaciarse)
+            //La instruccion anterior es agregada a su instruccion padre  (implica que el stack esta a punto de vaciarse)
             //Se comprueba si la instruccion padre es una declaracion de funcion
             //Se comprueba si su instruccion padre acepta instrucciones anidadas
-			if ( stack_instrucciones.length === 1 ) {
+            if ( stack_instrucciones.length === 1 ) {
                 console.log("se consume");
                 console.log(stack_instrucciones);
                 
                 //Se saca la instruccion y su indentacion del stack
-				let temp_instruccion_anterior = stack_instrucciones.pop();
-				indentaciones_anteriores.pop();
+                let temp_instruccion_anterior = stack_instrucciones.pop();
+                indentaciones_anteriores.pop();
 
-                //Se agrega la instruccion actual a la instruccion padre
-				let tipo_instruccion = temp_instruccion_anterior.toString().split(' ')[0];
-				cuerpo_actual_funcion += temp_instruccion_anterior + "Fin scope " + tipo_instruccion + " stack vacio\n" ;
+                //Se agrega la instruccion actual a la definicion de la funcion
+                //let tipo_instruccion = temp_instruccion_anterior.toString().split(' ')[0];
+                //cuerpo_actual_funcion += temp_instruccion_anterior + "Fin scope " + tipo_instruccion + " stack vacio\n" ;
+
                 instrucciones_funcion_actual.push(temp_instruccion_anterior);
-				
-			} else {
+                
+            } else {
                 /*
-				console.log("Agregado");
+                console.log("Agregado");
                 */
                 console.log("avanza");
                 console.log(stack_instrucciones);
 
                 //Se saca la instruccion y su indentacion del stack
-				let temp_instruccion_anterior = stack_instrucciones.pop();
-				indentaciones_anteriores.pop();
+                let temp_instruccion_anterior = stack_instrucciones.pop();
+                indentaciones_anteriores.pop();
 
                 //Se saca temporalmente la instruccion padre para su modificacion
-				let temp = stack_instrucciones.pop();
-				let tipo_instruccion = temp_instruccion_anterior.toString().split(' ')[0];
+                let temp = stack_instrucciones.pop();
+                let tipo_instruccion = temp_instruccion_anterior.toString().split(' ')[0];
 
                 /*
-				console.log("temp");
-				console.log(temp);
-				console.log("instr anterior");
-				console.log(temp_instruccion_anterior);
-				console.log("tipo");
-				console.log(tipo_instruccion);
+                console.log("temp");
+                console.log(temp);
+                console.log("instr anterior");
+                console.log(temp_instruccion_anterior);
+                console.log("tipo");
+                console.log(tipo_instruccion);
                 */
 
                 //Se agrega la instruccion actual a su instruccion padre y se reintroduce al stack
-				//temp += temp_instruccion_anterior + "Fin scope " + tipo_instruccion + "\n";
-
-				temp = agregarInstruccionAPadre(temp, temp_instruccion_anterior);
-				stack_instrucciones.push(temp);
-			}
+                //temp += temp_instruccion_anterior + "Fin scope " + tipo_instruccion + "\n";
+                
+                temp = agregarInstruccionAPadre(temp, temp_instruccion_anterior);
+                stack_instrucciones.push(temp);
+            }
             
             //Se hace que la indentacion actual sea la indentacion mas reciente en el stack (undefined si se acabo el stack)
             temp_indentacion_actual = indentaciones_anteriores[indentaciones_anteriores.length - 1];			
@@ -966,16 +1024,16 @@ tipo_dato
 
 declaracion_funcion
 	: R_VOID declaracion_funciond instrucciones_funcion
-    { $$ = crearDeclaracionFuncion(Parser.yy.utilidades.nuevoTerminalDato($1,@1.first_line,@1.first_column,5), $2[0], $2[1]); }
+    { $$ = crearDeclaracionFuncion(Parser.yy.utilidades.nuevoTerminalDato($1,@1.first_line,@1.first_column,5), $2[0], $2[1]); esPrimerInstruccion=true;}
 
 	| tipo_dato declaracion_funciond instrucciones_funcion
-    { $$ = crearDeclaracionFuncion($1, $2[0], $2[1]); }
+    { $$ = crearDeclaracionFuncion($1, $2[0], $2[1]); esPrimerInstruccion=true;}
 
 	| R_VOID declaracion_funciond
-    { $$ = crearDeclaracionFuncion(Parser.yy.utilidades.nuevoTerminalDato($1,@1.first_line,@1.first_column,5), $2[0], $2[1]); }
+    { $$ = crearDeclaracionFuncion(Parser.yy.utilidades.nuevoTerminalDato($1,@1.first_line,@1.first_column,5), $2[0], $2[1]); esPrimerInstruccion=true;}
     
 	| tipo_dato declaracion_funciond
-    { $$ = crearDeclaracionFuncion($1, $2[0], $2[1]); }
+    { $$ = crearDeclaracionFuncion($1, $2[0], $2[1]); esPrimerInstruccion=true;}
 ;
 
 declaracion_funciond
@@ -987,25 +1045,24 @@ declaracion_funciond
 ;
 
 instrucciones_funcion
-	: instrucciones_funcion indentaciones instruccion_funcion	{ accionStack($3); }
-	| indentaciones instruccion_funcion							{ stack_instrucciones.push($2); indentaciones_anteriores.push(indentacion_actual); }
+	: instrucciones_funcion indentaciones instruccion_funcion	{ if(esPrimerInstruccion){ esPrimerInstruccion=false; agregarPrimeraInstruccion($3);} else { accionStack($3);} }
+	| instrucciones_funcion indentaciones SALTO	                {}
+	| indentaciones instruccion_funcion							{ esPrimerInstruccion=false; agregarPrimeraInstruccion($2); }
+	| indentaciones SALTO							            {}
 ;
 
 instruccion_funcion
     : declaracion_variable SALTO 					        { $$ = $1; }
 
 	| asignacion SALTO	                                    { $$ = $1; }
-    //{ $$ = nuevaAsignacion(nuevoTerminal($1, @1.first_line, @1.first_column), $3); }
 
 	| llamada_funcion SALTO		{ $$ = $1; console.log("llamada realizada"); }
-    //{ $$ = $1; }
 
 	| R_MOSTRAR PAR_IZQ parametros_mostrar PAR_DER SALTO 	
-    { $$ = formatMostrar($3); console.log("output:"+$3); }
-    //{ $$ = nuevaInstruccionMostrar($3); }
+    { $$ = Parser.yy.utilidades.nuevaInstruccionMostrar(Parser.yy.utilidades.nuevosParametrosMostrar($3)); }
 
     | R_D_AST PAR_IZQ VARIABLE_IDENTIFICADOR PAR_DER SALTO
-    { $$ = Parser.yy.utilidades.nuevaInstruccionDibujarAST(nuevoTerminal($3, @3.first_line, @3.first_column)); }
+    { $$ = Parser.yy.utilidades.nuevaInstruccionDibujarAST(Parser.yy.utilidades.nuevoTerminal($3, @3.first_line, @3.first_column)); }
     
     | R_D_EXP PAR_IZQ expresion_logica PAR_DER SALTO
     { $$ = Parser.yy.utilidades.nuevaInstruccionDibujarExpresion($3); }
@@ -1032,12 +1089,10 @@ instruccion_funcion
     { $$ = Parser.yy.utilidades.nuevaInstruccionPara(Parser.yy.utilidades.nuevaCondicionInicial(Parser.yy.utilidades.nuevoTerminal($4, @4.first_line, @4.first_column), $6), $8, $10); }
 
 	| R_SI PAR_IZQ expresion_logica PAR_DER DOS_PUNTOS SALTO
-	{ $$ = formatSi($3);/*instruccionesAPI.nuevoPara($3,$5,$7,$9,$14)*/ }
-    //{ $$ = nuevaInstruccionSi($3); }
+    { $$ = Parser.yy.utilidades.nuevaInstruccionSi($3); }
 
 	| R_SINO DOS_PUNTOS SALTO
-	{ $$ = "Sino \n";/*instruccionesAPI.nuevoPara($3,$5,$7,$9,$14)*/ }
-    //{ $$ = nuevaInstruccionSino(); }
+    { $$ = Parser.yy.utilidades.nuevaInstruccionSino(Parser.yy.utilidades.nuevoTerminal($1,@1.first_line,@1.first_column)); }
 
     //por si acaso
 	//| R_PARA PAR_IZQ R_INT VARIABLE_IDENTIFICADOR IGUAL expresion PUNTO_COMA expresion_logica PUNTO_COMA direccion_para PAR_DER DOS_PUNTOS SALTO
@@ -1045,8 +1100,8 @@ instruccion_funcion
 ;
 
 parametros_mostrar
-	: parametros_mostrar COMA expresion_logica         { $$ = $1+"|Parametro:"+$3; }
-	| STRING                                    { $$ = "String:"+$1; }
+	: parametros_mostrar COMA expresion_logica  { $1.push($3); $$ = $1; }
+	| STRING                                    { let parametrosMostrar = []; parametrosMostrar.push(Parser.yy.utilidades.nuevoTerminalDato($1, @1.first_line, @1.first_column, 2)); $$ = parametrosMostrar; }
     
     //por si acaso
 	//| parametros_mostrar COMA expresion  { $$ = $1+"|Parametro:"+$3; }
