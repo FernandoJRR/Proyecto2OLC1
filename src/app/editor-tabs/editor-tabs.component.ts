@@ -1,11 +1,13 @@
-import { Component, Inject, OnInit } from '@angular/core';
+import { Component, Inject, OnInit, ViewChild } from '@angular/core';
 import { FormControl } from '@angular/forms';
 import * as CodeMirror from 'codemirror';
 import {MatDialog, MatDialogRef, MAT_DIALOG_DATA} from '@angular/material/dialog';
+import { CodemirrorComponent, CodemirrorModule } from '@ctrl/ngx-codemirror';
 
 export interface DialogData {
   name: string;
 }
+
 
 @Component({
   selector: 'app-editor-tabs',
@@ -15,6 +17,8 @@ export interface DialogData {
 export class EditorTabsComponent implements OnInit {
   tabs = [{ label: 'main.crl', content: ""}];
   selected = new FormControl(0);
+
+  @ViewChild('contenido_programa') editor!: CodemirrorModule;
 
   ngOnInit(): void {
   }

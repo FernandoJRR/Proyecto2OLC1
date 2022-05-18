@@ -1,5 +1,5 @@
 export class ErrorList {
-    errores: InterpreterError[];
+    errores: (InterpreterError|string)[];
     
     constructor(){
         this.errores = [];
@@ -11,6 +11,10 @@ export class ErrorList {
     
     public agregarErrorParametros(lexema: string|null, linea:number, columna:number, descripcion:string){
         this.errores.push(new InterpreterError(lexema,linea,columna,descripcion));       
+    }
+    
+    public agregarErrorExterno(error:string){
+        this.errores.push("Error: "+error);
     }
     
     public toString(): string{

@@ -1,10 +1,11 @@
-import { ControlConsola } from "src/app/app.component";
+import { ArchivoPreinterpretado, ControlConsola } from "src/app/app.component";
 import { AST, Nodo, NodoExpresion, NodoInstruccion, NodoNoTerminal, NodoRaiz, Terminal, TerminalTipoDato, TipoDato, TipoExpresionLogica, TipoExpresionMatematica, TipoExpresionRelacional, TipoInstruccion, TipoNoTerminal, UtilidadesAST } from "../ast/AST";
 import { ErrorList } from "../manejo_error/ErrorList";
 import { Token } from "../model/Token";
 import { Atributo, AtributoFuncion, AtributoMostrar, AtributoVariable, TablaDeSimbolos } from "../tabla_de_simbolos/TablaDeSimbolos";
+import { AdministradorProcesos } from "./AdministrarProcesos";
 import { ErrorCasteo, ErrorCasteoValor, ErrorFuncionInvalida, ErrorFuncionRetornaVoid, ErrorOperacion, ErrorTipo, ErrorTipoOperacion, ErrorVariableNoDefinida, ErrorVariableNoInicializada } from "./Errors";
-import { TablaCasteo } from "./SemanticAnalyzer";
+import { Parametro, TablaCasteo } from "./SemanticAnalyzer";
 
 export class Interpreter{
     ast: AST;
@@ -20,12 +21,24 @@ export class Interpreter{
     
     scopeCounter: number[] = []
     imprimirScope: boolean[] = []
+    scopesAImprimir: TablaDeSimbolos[] = []
     
     listadoAST: any[];
     listadoTablas: any[];
     dibujosExpresiones: any[];
-
-    constructor(ast: AST, tablaDeSimbolos: TablaDeSimbolos, output: ControlConsola, listaErrores: ErrorList, listadosDibujos: any[]){
+    
+    controlGlobal: ArchivoPreinterpretado[];
+    
+    tienePrincipal: boolean = false;
+    
+    nombreArchivo: string;
+    preInterpretado:ArchivoPreinterpretado;
+    
+    administradorProcesos:AdministradorProcesos;
+    
+    ejecutarFuncion:boolean = false;
+    constructor(ast: AST, tablaDeSimbolos: TablaDeSimbolos, output: ControlConsola, listaErrores: ErrorList, listadosDibujos: any[], 
+                controlGlobal: ArchivoPreinterpretado[], preInterpretado:ArchivoPreinterpretado, administradorProcesos:AdministradorProcesos){
         this.ast = ast;
         this.tablaDeSimbolos = tablaDeSimbolos;
         this.scopeActual = tablaDeSimbolos;
@@ -36,11 +49,77 @@ export class Interpreter{
         this.listadoAST = listadosDibujos[0];
         this.listadoTablas = listadosDibujos[1];
         this.dibujosExpresiones = listadosDibujos[2];
+
+        this.controlGlobal = controlGlobal;
+        this.nombreArchivo = preInterpretado.nombreArchivo;
+        this.preInterpretado = preInterpretado;
+        this.administradorProcesos = administradorProcesos;
+    }
+    
+    buscarFuncionesGlobal(identificador:string){
+        let matches:string[] = [];
+        for (let i = 0; i < this.preInterpretado.archivosImportados!.length; i++) {
+            const archivo = this.preInterpretado.archivosImportados![i];
+            let preInterpretado = this.buscarPreinterpretado(archivo); 
+            if (preInterpretado != undefined) {
+                if (preInterpretado.tablaDeSimbolos != undefined) {
+                    for (let index = 0; index < preInterpretado.tablaDeSimbolos.nested_scopes.length; index++) {
+                        const anidado = preInterpretado.tablaDeSimbolos.nested_scopes[index];
+                        let idFuncion = anidado.scope.scope_name!.slice(1, anidado.scope.scope_name!.length);
+                        idFuncion = idFuncion.split("|")[0];
+                        if (idFuncion === identificador) {
+                            matches.push(anidado.scope.scope_name!);
+                        }                
+                    }
+                }
+            }
+        }
+        return matches;
+    }
+    
+    buscarPreinterpretado(busqueda:string){
+        for (let i = 0; i < this.controlGlobal.length; i++) {
+            const archivo = this.controlGlobal[i];
+            if (archivo.nombreArchivo == busqueda) {
+                return archivo;
+            }
+        }
+        return undefined;
+    }
+    
+    lookup_global(llave:string){
+        for (let i = 0; i < this.preInterpretado.archivosImportados!.length; i++) {
+            const archivo = this.preInterpretado.archivosImportados![i];
+            let preInterpretado = this.buscarPreinterpretado(archivo); 
+            if (preInterpretado != undefined) {
+                if (preInterpretado.tablaDeSimbolos != undefined) {
+                    for (let index = 0; index < preInterpretado.tablaDeSimbolos.nested_scopes.length; index++) {
+                        const anidado = preInterpretado.tablaDeSimbolos.nested_scopes[index];
+                        if (anidado.scope.scope_name == llave) {
+                            return [preInterpretado.tablaDeSimbolos.lookup(anidado.scope.scope_name), archivo];
+                        }
+                    }
+                }
+            }
+        }
+        return undefined;        
     }
     
     cambiar_imprimir_scope_actual(){
         this.imprimirScope.pop()
         this.imprimirScope.push(true)
+    }
+    
+    dibujarTablasFuncion(){
+        while (this.scopesAImprimir.length>0) {
+            let scope = this.scopesAImprimir.pop();
+            this.generarTablaScope(scope!);
+        }
+    }
+    
+    generarTablaScope(tabla: TablaDeSimbolos){
+        let tablaString = tabla.generarTablaString();
+        this.listadoTablas.push(tablaString);        
     }
     
     generarTablaScopeActual(){
@@ -65,11 +144,44 @@ export class Interpreter{
     }
     
     interpretar_ast(){
+        this.ejecutarFuncion = false;
         let accion = this.interpretar(this.ast.raiz);
         if (accion != undefined) {
             return accion;
         }        
         return undefined;        
+    }
+    
+    interpretar_funcion(nodo:NodoNoTerminal, scope:TablaDeSimbolos, tipoRetorno:TipoDato){
+        console.log("proceso de scope "+this.scopeActual.scope.scope_name)
+        //Se configura el ambiente de ejcucion de una parte local del programa
+        this.scopeActual = scope;
+        this.scopeCounter.push(0);
+        this.imprimirScope.push(false);
+        
+        this.ejecutarFuncion = true;
+        
+        this.retornoActual.push(tipoRetorno)
+        
+        //Se ejecutan las instrucciones
+        let accion = this.interpretar_instrucciones(nodo);
+        
+        this.retornoActual.pop();
+        //Se acaba el ambiente de ejecucion y se realizan las acciones
+        if (this.imprimirScope[this.imprimirScope.length-1]) {
+            this.scopesAImprimir.push(this.scopeActual);
+        }
+        this.imprimirScope.pop()
+        this.scopeActual = this.scopeActual.parent_scope!;
+        this.scopeCounter.pop();
+        this.aumentar_scope_actual();
+        this.dibujarTablasFuncion();
+
+        if (accion != undefined && Array.isArray(accion)) {
+            return accion;
+        } else {
+            return undefined;
+        }
     }
 
     
@@ -124,7 +236,8 @@ export class Interpreter{
         
         //Acciones Postorden
         if (this.imprimirScope[this.imprimirScope.length-1]) {
-            this.generarTablaScopeActual();
+            //this.generarTablaScopeActual();
+            this.scopesAImprimir.push(this.scopeActual);
         }
         this.imprimirScope.pop()
         this.scopeCounter.pop()
@@ -136,7 +249,7 @@ export class Interpreter{
             let valor: ValorEvaluado = this.interpretar_expresion(nodo.hijos[0] as (NodoExpresion|Terminal));
             let valorCasteado = Caster.castear_valor_evaluado(valor.tipo, TipoDato.Double, valor);
             if (valorCasteado.valor < 0) {
-                this.listaErrores.agregarErrorParametros("Incerteza", this.utilidaddes.obtenerLineaNodo(nodo), this.utilidaddes.obtenerColumnaNodo(nodo), "El grado de incerteza tiene que ser mayor o igual a 0");
+                this.listaErrores.agregarErrorParametros("Incerteza", this.utilidaddes.obtenerLineaNodo(nodo), this.utilidaddes.obtenerColumnaNodo(nodo), "El grado de incerteza tiene que ser mayor o igual a 0 -> "+this.nombreArchivo);
             } else {
                 this.scopeActual.update_valor_variable("@incerteza", valorCasteado.valor);
             }
@@ -169,9 +282,14 @@ export class Interpreter{
         
         if (nodo.hijos.length === 3) {
             try{
+                console.log("poracaasigna")                
                 valorExpresion = this.interpretar_expresion(nodo.hijos[2] as NodoExpresion|Terminal);    
+                console.log("resultado")                
+                console.log(valorExpresion.valor)                
 
                 let valorCasteado: ValorEvaluado = Caster.castear_valor_evaluado(valorExpresion.tipo, tipoDato, valorExpresion);
+                console.log("resultadocasteado")                
+                console.log(valorCasteado.valor)                
             
                 identificadores.forEach(identificador => {
                     this.scopeActual.update_valor_variable(identificador.lexema, valorCasteado.valor);
@@ -252,8 +370,7 @@ export class Interpreter{
         let tokenIdentificador: Token = (nodo.hijos[1] as Terminal).token;
         
 
-        if (tokenIdentificador.lexema === "Principal") {
-            //Si se encuentra la funcion Principal se ejecutan sus instrucciones
+        if (this.ejecutarFuncion) {
             this.retornoActual.push(tipoRetorno)
             if (nodo.hijos[3] != undefined) {
                 let accion = this.interpretar_instrucciones(nodo.hijos[3] as NodoNoTerminal);
@@ -265,12 +382,13 @@ export class Interpreter{
         }
         
         if (this.imprimirScope[this.imprimirScope.length-1]) {
-            this.generarTablaScopeActual();
+            this.scopesAImprimir.push(this.scopeActual);
         }
         this.imprimirScope.pop()
         this.scopeActual = this.scopeActual.parent_scope!;
         this.scopeCounter.pop();
         this.aumentar_scope_actual();
+        this.dibujarTablasFuncion();
         return undefined;
     }
 
@@ -286,7 +404,8 @@ export class Interpreter{
         return undefined;
     }
     
-    interpretar_instruccion(nodo: NodoInstruccion): string|object[]|undefined{
+    interpretar_instruccion(nodo: NodoInstruccion): string|ValorEvaluado[]|undefined{
+        console.log("pasafibo")
         switch (nodo.tipoInstruccion) {
             case TipoInstruccion.DeclaracionVariable:						//se espera la estructura -> hijos: TerminalTipodato(TipoDato), NodoNoTerminal(Identificadores) [, NodoExpresion|Terminal]?
                 
@@ -307,6 +426,7 @@ export class Interpreter{
                 return "DETENER"
             case TipoInstruccion.Retorno:                                   //se espera la estructura -> hijos: Terminal(Retorno) [, NodoExpresion|Terminal]
                 let accionRetorno = this.interpretar_retorno(nodo);
+                console.log(this.nombreArchivo+" retorna "+accionRetorno)
                 if (accionRetorno != undefined) {
                     return accionRetorno;
                 }
@@ -375,10 +495,12 @@ export class Interpreter{
     }
     
     
-    interpretar_mientras(nodo: NodoInstruccion): string|object[]|undefined {
+    interpretar_mientras(nodo: NodoInstruccion): string|ValorEvaluado[]|undefined {
         this.scopeActual = this.scopeActual.nested_scopes[this.peek_scope()];
         this.scopeCounter.push(0);
         this.imprimirScope.push(false);
+        
+        let accion = undefined;
 
         try{
             let estadoCondicion: ValorEvaluado = this.interpretar_expresion(nodo.hijos[0] as (NodoExpresion|Terminal));
@@ -389,7 +511,7 @@ export class Interpreter{
                 while (estadoCondicion.valor) {
                     this.reset_counter_actual();
                     //se analizan las intrucciones de la funcion
-                    let accion = this.interpretar_instrucciones(nodo.hijos[1] as NodoNoTerminal);
+                    accion = this.interpretar_instrucciones(nodo.hijos[1] as NodoNoTerminal);
                     if (accion != undefined) {
                         if (accion == "CONTINUAR") {
                             estadoCondicion = this.interpretar_expresion(nodo.hijos[0] as (NodoExpresion|Terminal));
@@ -398,7 +520,7 @@ export class Interpreter{
                         } else if (accion == "DETENER") {
                             break
                         } else if (Array.isArray(accion)){
-                            return accion;
+                            break
                         }
                     }
                     
@@ -426,16 +548,22 @@ export class Interpreter{
         }
         
         if (this.imprimirScope[this.imprimirScope.length-1]) {
-            this.generarTablaScopeActual();
+            //this.generarTablaScopeActual();
+            
+            this.scopesAImprimir.push(this.scopeActual);
         }
         this.imprimirScope.pop()
         this.scopeActual = this.scopeActual.parent_scope!;
         this.scopeCounter.pop();
         this.aumentar_scope_actual();
-        return undefined;
+        if (Array.isArray(accion)) {
+            return accion;
+        } else {
+            return undefined;
+        }
     }
     
-    interpretar_para(nodo: NodoInstruccion): string|object[]|undefined {
+    interpretar_para(nodo: NodoInstruccion): string|ValorEvaluado[]|undefined {
         this.scopeActual = this.scopeActual.nested_scopes[this.peek_scope()];
         this.scopeCounter.push(0);
         this.imprimirScope.push(false);
@@ -447,6 +575,7 @@ export class Interpreter{
         
         let direccion = (nodo.hijos[2] as Terminal).token.lexema;
         
+        let accion = undefined;
         //Se comprueba la validez de la expresion inicial
         try{
             //Se le da el valor inicial a la variable
@@ -465,7 +594,7 @@ export class Interpreter{
                     this.reset_counter_actual();
 
                     //se analizan las intrucciones de la funcion
-                    let accion = this.interpretar_instrucciones(nodo.hijos[3] as NodoNoTerminal);
+                    accion = this.interpretar_instrucciones(nodo.hijos[3] as NodoNoTerminal);
                     if (accion != undefined) {
                         if (accion == "CONTINUAR") {
                             //Se realiza el incremento o decremento
@@ -483,7 +612,7 @@ export class Interpreter{
                         } else if (accion == "DETENER") {
                             break
                         } else if (Array.isArray(accion)){
-                            return accion;
+                            break;
                         }
                     }
                     
@@ -509,7 +638,7 @@ export class Interpreter{
                 let primerTipo = TipoDato[error.primerTipo];
                 let segundoTipo = TipoDato[error.segundoTipo];
                 let operacion = error.operacion;
-                this.listaErrores.agregarErrorParametros("MIENTRAS, EXPRESION", lineaError, columnaError, "La expresion tiene una operacion "+operacion+" entre un:"+primerTipo+" y un "+segundoTipo+", lo cual no es posible");
+                this.listaErrores.agregarErrorParametros("PARA, EXPRESION", lineaError, columnaError, "La expresion tiene una operacion "+operacion+" entre un:"+primerTipo+" y un "+segundoTipo+", lo cual no es posible");
             } else if (error instanceof ErrorVariableNoDefinida) {
                 this.listaErrores.agregarErrorParametros(error.variable.lexema, error.variable.linea, error.variable.columna, "La variable no ha sido declarada al momento de intentar evaluarla");
             } else if (error instanceof ErrorVariableNoInicializada) {
@@ -522,16 +651,22 @@ export class Interpreter{
         }
 
         if (this.imprimirScope[this.imprimirScope.length-1]) {
-            this.generarTablaScopeActual();
+            //this.generarTablaScopeActual();
+
+            this.scopesAImprimir.push(this.scopeActual);
         }
         this.imprimirScope.pop()
         this.scopeActual = this.scopeActual.parent_scope!;
         this.scopeCounter.pop();
         this.aumentar_scope_actual();
-        return undefined;
+        if (Array.isArray(accion)) {
+            return accion;
+        } else {
+            return undefined;
+        }
     }
     
-    interpretar_si(nodo: NodoInstruccion): string|object[]|undefined {
+    interpretar_si(nodo: NodoInstruccion): string|ValorEvaluado[]|undefined {
 
         try{
             let condicion: ValorEvaluado = this.interpretar_expresion(nodo.hijos[0] as (NodoExpresion|Terminal));
@@ -545,7 +680,8 @@ export class Interpreter{
 
                 if (nodo.hijos[1] instanceof NodoInstruccion) { //Tiene SINO pero no tiene instrucciones
                     if (this.imprimirScope[this.imprimirScope.length-1]) {
-                        this.generarTablaScopeActual();
+             //           this.generarTablaScopeActual();
+            this.scopesAImprimir.push(this.scopeActual);
                     }
                     this.imprimirScope.pop()
                     this.scopeActual = this.scopeActual.parent_scope!;
@@ -558,20 +694,23 @@ export class Interpreter{
                     if (condicion.valor) {
                         //se analizan las intrucciones de la funcion
                         let accion = this.interpretar_instrucciones(nodo.hijos[1] as NodoNoTerminal);
-                        if (accion != undefined) {
-                            return accion;
-                        }
 
                         if (this.imprimirScope[this.imprimirScope.length-1]) {
-                            this.generarTablaScopeActual();
+                            //this.generarTablaScopeActual();
+                        this.scopesAImprimir.push(this.scopeActual);
                         }
                         this.imprimirScope.pop()
                         this.scopeActual = this.scopeActual.parent_scope!;
                         this.scopeCounter.pop();
                         this.aumentar_scope_actual();
+
+                        if (accion != undefined) {
+                            return accion;
+                        }
                     } else {
                         if (this.imprimirScope[this.imprimirScope.length-1]) {
-                            this.generarTablaScopeActual();
+                            //this.generarTablaScopeActual();
+                        this.scopesAImprimir.push(this.scopeActual);
                         }
                         this.imprimirScope.pop()
                         this.scopeActual = this.scopeActual.parent_scope!;
@@ -585,7 +724,8 @@ export class Interpreter{
             } 
         } catch (error) {
             if (this.imprimirScope[this.imprimirScope.length-1]) {
-                this.generarTablaScopeActual();
+                //this.generarTablaScopeActual();
+            this.scopesAImprimir.push(this.scopeActual);
             }
             this.imprimirScope.pop()
             this.scopeActual = this.scopeActual.parent_scope!;
@@ -612,36 +752,39 @@ export class Interpreter{
         return undefined;
     }
     
-    interpretar_sino(nodo: NodoInstruccion): string|object[]|undefined{
+    interpretar_sino(nodo: NodoInstruccion): string|ValorEvaluado[]|undefined{
         this.scopeActual = this.scopeActual.nested_scopes[this.peek_scope()];
         this.scopeCounter.push(0);
         this.imprimirScope.push(false);
+        let accion = undefined;
 
         if (nodo.hijos.length > 1) {
             //se analizan las intrucciones de la funcion
-            let accion = this.interpretar_instrucciones(nodo.hijos[1] as NodoNoTerminal);
-            if (accion != undefined) {
-                return accion;
-            }
+            accion = this.interpretar_instrucciones(nodo.hijos[1] as NodoNoTerminal);
         }        
         
         if (this.imprimirScope[this.imprimirScope.length-1]) {
-            this.generarTablaScopeActual();
+            //this.generarTablaScopeActual();
+            this.scopesAImprimir.push(this.scopeActual);
         }
         this.imprimirScope.pop()
         this.scopeActual = this.scopeActual.parent_scope!;
         this.scopeCounter.pop();
         this.aumentar_scope_actual();
-        return undefined;
+        return accion;
     }
     
-    interpretar_retorno(nodo: NodoInstruccion): object[]|undefined{
-        let tokenRetorno = (nodo.hijos[0] as Terminal).token;
+    interpretar_retorno(nodo: NodoInstruccion): ValorEvaluado[]|undefined{
+        console.log("retorno de archivo "+this.nombreArchivo)
         if (nodo.hijos.length > 1) {
             let expresionRetornada = nodo.hijos[1];
             try{
                 let valorRetorno :ValorEvaluado = this.interpretar_expresion(expresionRetornada as Terminal|NodoExpresion|NodoInstruccion);    
+                console.log("valorretornadoretorno")
+                console.log(valorRetorno.valor)
                 valorRetorno = Caster.castear_valor_evaluado(valorRetorno.tipo, this.retornoActual[this.retornoActual.length-1], valorRetorno);
+                console.log("valorretornadoretorno2")
+                console.log(valorRetorno.valor)
                 return [valorRetorno];
             } catch (error) {
                 if (error instanceof ErrorTipoOperacion) {
@@ -659,6 +802,8 @@ export class Interpreter{
                     this.listaErrores.agregarErrorParametros(error.identificador.lexema, error.identificador.linea, error.identificador.columna, "La funcion ingresada tiene errores por lo que no se pudo determinar su tipo");
                 } else if (error instanceof ErrorFuncionRetornaVoid) {
                     this.listaErrores.agregarErrorParametros(error.identificador.lexema, error.identificador.linea, error.identificador.columna, error.message);
+                } else {
+                    console.log(error)
                 }
             }
         } else {
@@ -671,8 +816,21 @@ export class Interpreter{
         if (nodo.tipoInstruccion == TipoInstruccion.DibujarAST) {
             let identificador = (nodo.hijos[0] as Terminal).token.lexema;
             let funciones: string[] = this.scopeActual.buscarFunciones(identificador, []);       
+            let funcionesGlobales: string[] = this.buscarFuncionesGlobal(identificador);
             funciones.forEach(llaveFuncion => {
                 let atributoFuncion = this.scopeActual.lookup(llaveFuncion)! as AtributoFuncion;
+                if (atributoFuncion.instrucciones != undefined) {
+                    let dibujoFuncion = this.ast.recorrer_funcion(atributoFuncion.instrucciones);
+                    dibujoFuncion["name"] = TipoDato[atributoFuncion.tipo]+":"+atributoFuncion.nombre+"("+atributoFuncion.parametros+")";
+                    this.listadoAST.push([dibujoFuncion]);                
+                } else {
+                    let dibujoFuncion = { name: "", child: [] }
+                    dibujoFuncion["name"] = TipoDato[atributoFuncion.tipo]+" : "+atributoFuncion.nombre+"("+atributoFuncion.parametros+")";
+                    this.listadoAST.push([dibujoFuncion]);                
+                }
+            });
+            funcionesGlobales.forEach(llaveFuncion => {
+                let atributoFuncion = this.lookup_global(llaveFuncion)![0] as AtributoFuncion;
                 if (atributoFuncion.instrucciones != undefined) {
                     let dibujoFuncion = this.ast.recorrer_funcion(atributoFuncion.instrucciones);
                     dibujoFuncion["name"] = TipoDato[atributoFuncion.tipo]+":"+atributoFuncion.nombre+"("+atributoFuncion.parametros+")";
@@ -721,16 +879,34 @@ export class Interpreter{
         let parametrosTipos: TipoDato[] = parametros.length==0? [] : parametros[0] as TipoDato[];
         let parametrosValores: ValorEvaluado[] = parametros.length==0? [] : parametros[1] as ValorEvaluado[];
         
+        console.log("aqui1 "+this.nombreArchivo)
         if (tokenIdentificador.lexema != "Principal") {
+        console.log("aqui2 "+this.nombreArchivo)
             //Si despues de ingresar los parametros hay mas errores que antes de analizarlos no se analizara la existencia de la funcion
             if (this.listaErrores.errores.length == cantidadErrores) {
                 let llaveFuncion = this.scopeActual.crearLlaveDeParametrosNumeros(tokenIdentificador.lexema, parametrosTipos);            
                 let resultadoTabla: Atributo|undefined = this.scopeActual.lookup(llaveFuncion);
+        console.log("aqui3 "+this.nombreArchivo)
+                
+                if (resultadoTabla == undefined) {
+        console.log("aqui4 "+this.nombreArchivo)
+                    let existenciaGlobal = this.lookup_global(llaveFuncion)!;
+                    let parametrosFormato = this.formatearParametros(parametrosValores, (existenciaGlobal[0] as AtributoFuncion).parametros);
+                    let valorRetornado = this.administradorProcesos.llamarProcedimiento(existenciaGlobal[1] as string, llaveFuncion, parametrosFormato);
+                    console.log("retornoproced "+this.nombreArchivo)
+                    console.log(valorRetornado)
+                    return valorRetornado;
+                } else {
+                    let parametrosFormato = this.formatearParametros(parametrosValores, (resultadoTabla as AtributoFuncion).parametros);
+                    let valorRetornado = this.administradorProcesos.llamarProcedimiento(this.nombreArchivo, llaveFuncion, parametrosFormato);
+                    return valorRetornado;
+                }
                 
             }      
         } else {
             this.listaErrores.agregarErrorParametros(tokenIdentificador.lexema, tokenIdentificador.linea, tokenIdentificador.columna, "La funcion Principal no se puede llamar")
         }
+        return undefined;
     }
     
     obtener_parametros_ingresados(nodo: NodoNoTerminal){
@@ -768,6 +944,16 @@ export class Interpreter{
         }
         return [tiposParametros, valoresParametros];
     }
+    
+    formatearParametros(parametros:ValorEvaluado[], parametrosFuncion: Parametro[]){
+        let formatoParametros:Map<string,ValorEvaluado> = new Map()
+        for (let i = 0; i < parametros.length; i++) {
+            const parametro = parametros[i];
+            const nombreParametro = parametrosFuncion[i].identificador.lexema;
+            formatoParametros.set(nombreParametro, parametro);
+        }
+        return formatoParametros;        
+    }
 
     interpretar_expresion(nodo: NodoExpresion|Terminal|NodoInstruccion): ValorEvaluado{
         //Cuando se encuentre un terminal se devolvera su tipo
@@ -777,25 +963,32 @@ export class Interpreter{
                 return valor;
             } else { //En caso de que sea una variable se buscara en la tabla de simbolos
                 let variable: AtributoVariable = this.scopeActual.lookup(nodo.token.lexema)! as AtributoVariable;
+                console.log("comparavar de "+nodo.token.lexema+" "+JSON.stringify(variable))
+                console.log(variable)
                 return new ValorEvaluado(variable.tipo, variable.valor);
             }
-            /*
         } else if (nodo instanceof NodoInstruccion) {
             let cantidadErrores = this.listaErrores.errores.length;
-            this.analizar_llamada_funcion(nodo);
             let tokenIdentificador = (nodo.hijos[0] as Terminal).token;
-            if (this.listaErrores.errores.length == cantidadErrores) {
-                let parametros: TipoDato[] = nodo.hijos[1]==undefined? [] : this.obtener_parametros_ingresados(nodo.hijos[1] as NodoNoTerminal);
-                let llaveFuncion = this.scopeActual.crearLlaveDeParametrosNumeros(tokenIdentificador.lexema, parametros);            
-                let resultadoTabla: AtributoFuncion = this.scopeActual.lookup(llaveFuncion)! as AtributoFuncion;
-                let tipoRetornoFuncion: TipoDato = resultadoTabla.tipo;                   
-                if (tipoRetornoFuncion == TipoDato.Void) {
-                    throw new ErrorFuncionRetornaVoid("La funcion no tiene un valor de retorno por lo que no es asignable ni operable", tokenIdentificador);
-                } else {
-                    return tipoRetornoFuncion;
-                }
+            let valorRetornado = this.interpretar_llamada_funcion(nodo);
+            console.log("retornollamada "+this.nombreArchivo)
+            console.log(valorRetornado)
+            if (valorRetornado != undefined) {
+                return valorRetornado[0];
             } else {
-                throw new ErrorFuncionInvalida("La funcion tiene errores por lo que no se pudo determinar su tipo", tokenIdentificador);
+                throw new ErrorFuncionInvalida("La funcion no ha regresado ningun valor", tokenIdentificador);
+            }
+            
+            /*
+            let parametros: TipoDato[] = nodo.hijos[1]==undefined? [] : this.obtener_parametros_ingresados(nodo.hijos[1] as NodoNoTerminal)[0] as TipoDato[];
+            let llaveFuncion = this.scopeActual.crearLlaveDeParametrosNumeros(tokenIdentificador.lexema, parametros);            
+            let resultadoTabla: AtributoFuncion = this.scopeActual.lookup(llaveFuncion)! as AtributoFuncion;
+            let existenciaGlobal:
+            let tipoRetornoFuncion: TipoDato = resultadoTabla.tipo;                   
+            if (tipoRetornoFuncion == TipoDato.Void) {
+                throw new ErrorFuncionRetornaVoid("La funcion no tiene un valor de retorno por lo que no es asignable ni operable", tokenIdentificador);
+            } else {
+                return tipoRetornoFuncion;
             }
             */
         } else if (nodo instanceof NodoExpresion) {
@@ -900,6 +1093,9 @@ export class Interpreter{
                     primerValor = this.interpretar_expresion(nodo.hijos[0] as (NodoExpresion|Terminal|NodoInstruccion));
                     segundoValor = this.interpretar_expresion(nodo.hijos[1] as (NodoExpresion|Terminal|NodoInstruccion));
                     try {
+                        console.log("comparacion")
+                        console.log(primerValor.valor)
+                        console.log(segundoValor.valor)
                         resultado = new ValorEvaluado(TipoDato.Boolean, primerValor.valor <= segundoValor.valor);
                         return resultado;
                     } catch (error) {
@@ -1090,6 +1286,7 @@ export class ValorEvaluado{
 
 class Caster{
     static castear_valor_evaluado(tipoOrigen: TipoDato, tipoDestino: TipoDato, valorEvaluado: ValorEvaluado): ValorEvaluado{
+        console.log("casteo orig:"+tipoOrigen+" dest:"+tipoDestino+" val:"+valorEvaluado.valor)
         let valor = this.castear(tipoOrigen,tipoDestino,valorEvaluado.valor);
         return new ValorEvaluado(valorEvaluado.tipo, valor);
     }

@@ -11,11 +11,28 @@ import { Interpreter } from './services/parser/interpreter/Interpreter';
 import html2canvas from 'html2canvas';
 import { EditorTabsComponent } from './editor-tabs/editor-tabs.component';
 import { MatDialog, MatDialogRef, MAT_DIALOG_DATA } from '@angular/material/dialog';
+import { AdministradorProcesos } from './services/parser/interpreter/AdministrarProcesos';
 
 declare var require: NodeRequire;
 
 export interface DialogFile {
   file: any;
+}
+
+export class ArchivoPreinterpretado{
+  nombreArchivo: string;
+  ast: AST
+  tablaDeSimbolos: TablaDeSimbolos|undefined;
+  presenciaDePrincipal: boolean;
+  archivosImportados:string[]|undefined;
+
+  constructor(nombreArchivo:string, ast:AST, tablaDeSimbolos?:TablaDeSimbolos, presenciaDePrincipal:boolean = false, archivosImportados?:string[]){
+    this.nombreArchivo = nombreArchivo;
+    this.ast = ast;
+    this.tablaDeSimbolos= tablaDeSimbolos;
+    this.presenciaDePrincipal = presenciaDePrincipal;
+    this.archivosImportados = archivosImportados;
+  }
 }
 
 @Component({
@@ -36,6 +53,11 @@ export class AppComponent {
   columnasTabla: string[] = ["item","contenido"]
   expresionesDibujo: any = []
   
+  archivosProyecto: ArchivoPreinterpretado[] = []
+  
+  colaImportaciones: string[] = []
+  
+  
 
   @ViewChild('astCanvas') ast!: ElementRef;
   @ViewChild('linkDescargaAST') linkDescargaAST!: ElementRef;
@@ -46,9 +68,30 @@ export class AppComponent {
 
   @ViewChild('editorTabs') editorTabs!: EditorTabsComponent;
 
+  static archivosEditor:string[] = []
+
   constructor(public dialogCarga: MatDialog){
     this.area_programa.disabled
     this.area_interprete.disabled
+  }
+  
+  obtenerArchivo(nombre:string){
+    for (let i = 0; i < this.archivosProyecto.length; i++) {
+      const archivo = this.archivosProyecto[i];
+      if (archivo.nombreArchivo == nombre) {
+        return archivo;
+      }
+    }
+    return undefined;
+  }
+  
+  cambiarArchivo(nombre:string, nuevoValor:ArchivoPreinterpretado){
+    for (let i = 0; i < this.archivosProyecto.length; i++) {
+      const archivo = this.archivosProyecto[i];
+      if (archivo.nombreArchivo == nombre) {
+        this.archivosProyecto[i] = nuevoValor;
+      }
+    }
   }
   
   cargarArchivo(){
@@ -124,13 +167,92 @@ export class AppComponent {
     })
   }
   
-  compilar(){
-    let contenido = this.editorTabs.tabs[this.editorTabs.selected.value]["content"];
-    let controlConsola = new ControlConsola(this.area_interprete);
-    let controlOutput = new ControlConsola(this.area_programa);
+  listadoErrores:ErrorList = new ErrorList();
+  hayErrores:boolean = false;
+  
+  archivosCantidadImportaciones: Map<string,number> = new Map();
+
+  public analizar_archivo(nombreArchivo:string){
+    this.listadoErrores = new ErrorList();
+    let contenidoArchivo:string|undefined = undefined;
+    let archivosImportados:string[] = []
+    for (let i = 0; i < this.editorTabs.tabs.length; i++) {
+      const tab = this.editorTabs.tabs[i];
+      if (tab["label"] == nombreArchivo) {
+        contenidoArchivo = tab["content"]
+
+        //Se agrega un salto de linea al final para facilitar el parseo si es necesario
+        if (contenidoArchivo.charAt(contenidoArchivo.length-1) != '\n') {
+          contenidoArchivo += '\n';
+        }
+        break;
+      }
+    }
+    if (contenidoArchivo == undefined) {
+      this.listadoErrores.agregarErrorExterno("No se encontro el archivo: "+nombreArchivo);
+    } else {
+      let controlConsola = new ControlConsola(this.area_interprete);
+      this.listaASTFunciones = []
+      this.datosTablas = []
+      this.expresionesDibujo = []
+
+      //Se invoca una instancia del parser
+      const parser = require("./services/parser/crl_parser.js")
+      
+      //Se agrega la lista de errores, el ast, y la tabla de simbolos al parser
+      let ast = new AST(archivosImportados, nombreArchivo);
+      let astUtilidades = new UtilidadesAST();
+
+      parser.Parser.yy = { listaErrores: this.listadoErrores, ast: ast, utilidades: astUtilidades }
+      
+      //Se imprimer informacion
+      controlConsola.agregarOutputResaltado("Realizando Analisis Lexico/Sintactico de: "+nombreArchivo);
+      
+      try{
+        //Se parsea el contenido
+        parser.parser.parse(contenidoArchivo);
+      } catch(error) {
+        this.listadoErrores.agregarErrorParametros("EOF",0,0,"Error irrecuperable encontrado o comentario sin cerrar al final del archivo");
+      }
+      
+      if (this.listadoErrores.errores.length > 0) {
+        this.hayErrores = true;
+        controlConsola.agregarOutput("Se encontraron los siguientes errores lexicos y sintacticos:", true);
+        this.listadoErrores.errores.forEach(error => {
+          controlConsola.agregarOutput(error.toString(), false);
+        });
+      } 
+      controlConsola.agregarOutput("AST Generado",true);
+      this.archivosProyecto.push(new ArchivoPreinterpretado(nombreArchivo, ast))
+      
+      controlConsola.agregarOutput("---------------------------------------------------------------------------------",false);
+      
+      this.colaImportaciones.push(...archivosImportados);
+      this.archivosCantidadImportaciones.set(nombreArchivo, archivosImportados.length);
+      archivosImportados.forEach(archivoImportado => {
+        this.analizar_archivo(archivoImportado);
+      });
+    }
+  }
+  
+  reset_compilador(){
+    this.archivosCantidadImportaciones = new Map();
+    this.archivosProyecto = []
+    this.colaImportaciones = [];
+    this.hayErrores = false;
+    this.guardarArchivosEditor();
     this.listaASTFunciones = []
     this.datosTablas = []
     this.expresionesDibujo = []
+    this.listadoErrores = new ErrorList();
+  }
+  
+  compilar(){
+    this.reset_compilador();
+    let contenido = this.editorTabs.tabs[this.editorTabs.selected.value]["content"];
+    let nombreArchivoEjecutar = this.editorTabs.tabs[this.editorTabs.selected.value]["label"];
+    let controlConsola = new ControlConsola(this.area_interprete);
+    let archivosImportados:string[] = []
 
     //Se limpia la consola de su anterior uso
     controlConsola.limpiarOutput();
@@ -139,11 +261,10 @@ export class AppComponent {
     const parser = require("./services/parser/crl_parser.js")
     
     //Se agrega la lista de errores, el ast, y la tabla de simbolos al parser
-    let listadoErrores = new ErrorList();
-    let ast = new AST();
+    let ast = new AST(archivosImportados, nombreArchivoEjecutar);
     let astUtilidades = new UtilidadesAST();
 
-    parser.Parser.yy = { listaErrores: listadoErrores, ast: ast, utilidades: astUtilidades }
+    parser.Parser.yy = { listaErrores: this.listadoErrores, ast: ast, utilidades: astUtilidades }
     
     //Se agrega un salto de linea al final para facilitar el parseo si es necesario
     if (contenido.charAt(contenido.length-1) != '\n') {
@@ -151,36 +272,72 @@ export class AppComponent {
     }
     
     //Se imprimer informacion
-    controlConsola.agregarOutputResaltado("Realizando Analisis");
+    controlConsola.agregarOutputResaltado("Realizando Analisis Lexico/Sintactico de: "+nombreArchivoEjecutar);
     
     try{
       //Se parsea el contenido
       parser.parser.parse(contenido);
     } catch(error) {
-      listadoErrores.agregarErrorParametros("EOF",0,0,"Error irrecuperable encontrado o comentario sin cerrar al final del archivo");
+      this.listadoErrores.agregarErrorParametros("EOF",0,0,"Error irrecuperable encontrado o comentario sin cerrar al final del archivo");
+      console.log(error)
     }
     
-    if (listadoErrores.errores.length > 0) {
-      controlConsola.agregarOutput("Se encontraron los siguientes errores lexicos y sintacticos:", true);
-      listadoErrores.errores.forEach(error => {
+    if (this.listadoErrores.errores.length > 0) {
+      this.hayErrores = true;
+      controlConsola.agregarOutput("Se encontraron los siguientes errores durante el analisis lexico y sintactico:", true);
+      this.listadoErrores.errores.forEach(error => {
         controlConsola.agregarOutput(error.toString(), false);
       });
     } 
     controlConsola.agregarOutput("AST Generado",true);
-    let nodosAST = []
-    nodosAST.push(ast.obtenerRecorrido());
+    controlConsola.agregarOutput("---------------------------------------------------------------------------------",false);
     
+    this.archivosProyecto.push(new ArchivoPreinterpretado(nombreArchivoEjecutar, ast))
+    
+    this.colaImportaciones.push(...archivosImportados);
+    this.archivosCantidadImportaciones.set(nombreArchivoEjecutar, archivosImportados.length);
+    archivosImportados.forEach(archivoImportado => {
+      this.analizar_archivo(archivoImportado);
+    });
+    
+    this.colaImportaciones.unshift(nombreArchivoEjecutar);
+
+    let temp = new Map([...this.archivosCantidadImportaciones.entries()].sort((a, b) => b[1] - a[1]));
+    this.archivosCantidadImportaciones = temp;
+    this.colaImportaciones = Array.from(this.archivosCantidadImportaciones.keys());
+
+
+    
+    //TODO:quitar
+    controlConsola.agregarOutput("Importaciones",false)
+    this.colaImportaciones.forEach(importacion => {
+      controlConsola.agregarOutput(importacion,true)
+    });
+    
+
+
+    
+      
+
+    console.log("errores "+this.hayErrores)
     //Se realiza el analisis semantico
-    listadoErrores = new ErrorList();
+    this.analisis_semantico();
+    console.log("semanticoerrores "+this.hayErrores)
+    
+    if (!this.hayErrores) {
+      this.interpretar(nombreArchivoEjecutar);
+    } 
+    /*
+    this.listadoErrores = new ErrorList();
     controlConsola.agregarOutput("Realizando Analisis Semantico",true);
     
     let tablaSimbolos = new TablaDeSimbolos();
-    let analizadorSemantico = new SemanticAnalyzer(ast, tablaSimbolos, listadoErrores);
+    let analizadorSemantico = new SemanticAnalyzer(ast, tablaSimbolos, this.listadoErrores, this.archivosProyecto, nombreArchivoEjecutar, this.colaImportaciones);
     analizadorSemantico.analizarAST();
     controlConsola.agregarOutputResaltado("Analisis Semantico Finalizado");
-    if (listadoErrores.errores.length > 0) {
+    if (this.listadoErrores.errores.length > 0) {
       controlConsola.agregarOutput("Se encontraron los siguientes errores:", true);
-      listadoErrores.errores.forEach(error => {
+      this.listadoErrores.errores.forEach(error => {
         controlConsola.agregarOutput(error.toString(), false);
       });
     } else {
@@ -190,32 +347,104 @@ export class AppComponent {
     console.log(tablaSimbolos)
     
     //En caso de que no existan errores se realizara la interpretacion, caso contrario no se hara
-    if (listadoErrores.errores.length == 0) {
+    if (this.listadoErrores.errores.length == 0) {
       controlConsola.agregarOutputResaltado("Iniciando Interpretacion");
-      listadoErrores = new ErrorList();
+      this.listadoErrores = new ErrorList();
+
+      //this.interpretar();
+    } 
+    console.log(tablaSimbolos);
+    */
+  }
+  
+  analisis_semantico(){
+    let controlConsola = new ControlConsola(this.area_interprete);
+    //Se realiza el analisis semantico a la cola de importaciones de manera inversa siendo el archivo ejecutado el ultimo en ser analizado
+    for (let i = this.colaImportaciones.length-1; i >= 0; i--) {
+      const archivoActual = this.colaImportaciones[i]
+
+      this.listadoErrores = new ErrorList();
+      controlConsola.agregarOutputResaltado("Realizando Analisis Semantico de: "+archivoActual);
+      let archivoPreInterpretado = this.obtenerArchivo(archivoActual);
       
+      let semanticAnalyzer = new SemanticAnalyzer(archivoPreInterpretado!, new TablaDeSimbolos(), this.listadoErrores, this.archivosProyecto);
+      let archivoObtenido = semanticAnalyzer.analizarAST();
+      this.cambiarArchivo(archivoActual, archivoObtenido);
+      console.log(archivoObtenido.tablaDeSimbolos);
+      if (this.listadoErrores.errores.length > 0) {
+        this.hayErrores = true;
+        controlConsola.agregarOutput("Se encontraron los siguientes errores durante el analisis semantico:", true);
+        this.listadoErrores.errores.forEach(error => {
+          controlConsola.agregarOutput(error.toString(), false);
+        });
+      } 
+      controlConsola.agregarOutput("---------------------------------------------------------------------------------",false);
+    }
+    let archivosPrincipal:string[] = [];
+    this.archivosProyecto.forEach(archivo => {
+      if (archivo.presenciaDePrincipal) {
+        archivosPrincipal.push(archivo.nombreArchivo);
+      }
+    });
+    this.listadoErrores = new ErrorList();
+    if (!this.archivosProyecto[0].presenciaDePrincipal) {
+      this.listadoErrores.agregarErrorExterno("El metodo Principal no esta presente en el archivo ejecutado");
+    }
+    if (archivosPrincipal.length>1) {
+      this.listadoErrores.agregarErrorExterno("Hay mas de un archivo con metodos Principal: "+archivosPrincipal.toString());
+    }
+    if (this.listadoErrores.errores.length > 0) {
+      this.hayErrores = true;
+      this.listadoErrores.errores.forEach(error => {
+        controlConsola.agregarOutput(error.toString(), false);
+      });
+    } 
+  }
+  
+  interpretar(archivoPrincipal:string){
+      let controlConsola = new ControlConsola(this.area_interprete);
+      let controlOutput = new ControlConsola(this.area_programa);
       controlOutput.limpiarOutput();
-      let interprete = new Interpreter(ast, tablaSimbolos, controlOutput, listadoErrores, [this.listaASTFunciones,this.datosTablas,this.expresionesDibujo]);
-      interprete.interpretar_ast();
-      console.log("funcionesast")
-      console.log(this.listaASTFunciones)
+      let administradorProcesos = new AdministradorProcesos(this.archivosProyecto, this.listadoErrores, controlOutput, 
+                                                            [this.listaASTFunciones,this.datosTablas,this.expresionesDibujo])
       
-      if (listadoErrores.errores.length > 0) {
-        controlConsola.agregarOutput("Se encontraron los siguientes errores:", true);
-        listadoErrores.errores.forEach(error => {
+      //Se preanalizan las variables globales e incertezas
+      this.archivosProyecto.forEach(archivo => {
+        let interprete = new Interpreter(archivo.ast, archivo.tablaDeSimbolos!, controlOutput, this.listadoErrores, 
+                                        [this.listaASTFunciones,this.datosTablas,this.expresionesDibujo], this.archivosProyecto, archivo, administradorProcesos);
+        interprete.interpretar_ast();
+      });
+      
+      if (this.listadoErrores.errores.length > 0) {
+        controlConsola.agregarOutput("Se encontraron los siguientes errores en pre-interpretacion:", true);
+        this.listadoErrores.errores.forEach(error => {
           controlConsola.agregarOutput(error.toString(), false);
         });
       } else {
-        controlConsola.agregarOutputResaltado("Interpretacion Exitosa");
+        this.listadoErrores = new ErrorList();
+        controlConsola.agregarOutputResaltado("Iniciando Interpretacion");
+        administradorProcesos.llamarProcedimiento(archivoPrincipal, "&Principal|", new Map())
+        controlConsola.agregarOutputResaltado("Interpretacion Finalizada");
       }
-
-    } else {
-            
-    }
-
-    console.log(tablaSimbolos);
   }
 
+  guardarArchivosEditor(){
+    AppComponent.archivosEditor = [];
+    this.editorTabs.tabs.forEach(tab => {
+      AppComponent.archivosEditor.push(tab["label"]);
+    });
+  }
+
+  static buscarArchivo(archivoBuscar:string){
+    let contenidoArchivo:string|undefined = undefined;
+    for (let i = 0; i < AppComponent.archivosEditor.length; i++) {
+      const archivo = AppComponent.archivosEditor[i];
+      if (archivo == archivoBuscar) {
+        return true;
+      }
+    }
+    return false;
+  }
 
 }
 

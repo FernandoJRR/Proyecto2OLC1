@@ -1,11 +1,18 @@
+import { AppComponent } from "src/app/app.component";
 import { ErrorList } from "../manejo_error/ErrorList";
 import { Token } from "../model/Token";
 
 export class AST{
     raiz: NodoRaiz;
     
-    constructor(){
+    colaImportaciones:string[];
+    nombreArchivo:string;
+    
+    constructor(colaImportaciones:string[], nombreArchivo:string){
         this.raiz = new NodoRaiz();
+        
+        this.colaImportaciones = colaImportaciones;
+        this.nombreArchivo = nombreArchivo;
     }
     
     recorrer():void {
@@ -24,9 +31,21 @@ export class AST{
         return recorrer(this.raiz,true);
     }
     
-    nuevaImportacion(archivo: Terminal){
+    nuevaImportacion(archivo: Terminal, listadoErrores:ErrorList){
         let nodoImportacion: NodoInstruccion = new NodoInstruccion(TipoInstruccion.Importacion)
         
+        if (archivo.token.lexema != this.nombreArchivo) {
+            let existeImportacion = AppComponent.buscarArchivo(archivo.token.lexema);
+            if (existeImportacion) {
+                if (!this.colaImportaciones.includes(archivo.token.lexema)) {
+                    this.colaImportaciones.push(archivo.token.lexema);
+                }
+            } else {
+                listadoErrores.agregarErrorParametros(archivo.token.lexema, archivo.token.linea, archivo.token.columna, "El archivo a importar no existe")
+            }
+        } else {
+            listadoErrores.agregarErrorParametros(archivo.token.lexema, archivo.token.linea, archivo.token.columna, "Un archivo no se puede importar a si mismo")
+        }
         nodoImportacion.agregarHijo(archivo);
         this.raiz.agregarHijo(nodoImportacion);
     }

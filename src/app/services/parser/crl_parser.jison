@@ -19,6 +19,8 @@ var cuerpo_actual_funcion = "";
 var instrucciones_funcion_actual = [];
 
 var esPrimerInstruccion = true;
+
+var funcionActual = undefined;
 %}
 
 /* Lexer */
@@ -115,7 +117,7 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
 "Importar" return returnToken('R_IMPORT');
 "Incerteza" return returnToken('R_INCERTEZA');
 "Mostrar"  return returnToken('R_MOSTRAR');
-"DibujarAST"  return returnToken('R_D_AST');
+"DibujarAST"  console.log("dib ast enviado"); return returnToken('R_D_AST');
 "DibujarEXP" return returnToken('R_D_EXP');
 "DibujarTS"  return returnToken('R_D_TS');
 "Retorno"   return returnToken('R_RETORNO')
@@ -911,6 +913,7 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
 	}
     
     function crearDeclaracionFuncion(tipo, identificador, parametros){
+        console.log("se declara funcion")
         return Parser.yy.ast.nuevaDeclaracionFuncion(tipo, identificador, Parser.yy.utilidades.nuevaDeclaracionParametros(parametros)); 
     }
     
@@ -926,6 +929,23 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
     }
     
     function terminar(){
+        stack = []; //Integer stack para guardar indentaciones encontradas
+
+        stack_instrucciones = []
+        indentaciones_anteriores = []
+        indentacion_actual = 0;
+
+        indentaciones_continuas = 0;
+
+        cuerpo_actual_funcion = "";
+        instrucciones_funcion_actual = [];
+
+        esPrimerInstruccion = true;
+
+        funcionActual = undefined;
+
+        
+        funcionActual = undefined
         if(Parser.yy.listaErrores.errores.length > 0){
             return {errores: Parser.yy.listaErrores.toString()};
         }
@@ -951,9 +971,9 @@ double  = "-"? ({digit}+ "." {digit}+ | {digit}+ ".")
 %% /* Definición de la gramática */
 
 ini
-    : encabezado instrucciones fin  { console.log("fin,eof parseado"); imprimirErrores(); return terminar(); } 
+    : encabezado instrucciones fin  { if(funcionActual != undefined) {declararFuncion(funcionActual)} console.log("fin,eof parseado"); imprimirErrores(); return terminar(); } 
     | encabezado fin                { console.log("fin,eof parseado"); imprimirErrores(); return terminar(); } 
-	| instrucciones fin             { console.log("fin,eof parseado"); imprimirErrores(); return terminar(); }
+	| instrucciones fin             { if(funcionActual != undefined) {declararFuncion(funcionActual)} console.log("fin,eof parseado"); imprimirErrores(); return terminar(); }
 	| fin 							{ console.log("vacio, eof parseado"); return terminar(); }
 	| SALTO ini 
 ;
@@ -976,7 +996,7 @@ importaciones
 ;
 
 importacion
-    : R_IMPORT NOMBRE_ARCHIVO SALTO	{ $$ = $2.toString(); Parser.yy.ast.nuevaImportacion(Parser.yy.utilidades.nuevoTerminal($2, @2.first_line, @2. first_column)); }
+    : R_IMPORT NOMBRE_ARCHIVO SALTO	{ $$ = $2.toString(); Parser.yy.ast.nuevaImportacion(Parser.yy.utilidades.nuevoTerminal($2, @2.first_line, @2. first_column), Parser.yy.listaErrores); }
 ;
 
 incerteza 
@@ -995,11 +1015,13 @@ instrucciones
 ;
 
 instruccion
-	: declaracion_variable SALTO                        { console.log($1); Parser.yy.ast.nuevaInstruccion($1); }
+	: declaracion_variable SALTO                        { if(funcionActual!=undefined){ declararFuncion(funcionActual); funcionActual = undefined;} Parser.yy.ast.nuevaInstruccion($1); }
 
-	| declaracion_funcion                               { declararFuncion($1); }
+	| declaracion_funcion                               { if(funcionActual == undefined){funcionActual = $1; console.log("se guarda funcion")} else { declararFuncion(funcionActual); funcionActual = $1;}}
 
-	| asignacion SALTO	                                { Parser.yy.ast.nuevaInstruccion($1); }
+	| asignacion SALTO	                                { if(funcionActual!=undefined){ declararFuncion(funcionActual); funcionActual = undefined;} Parser.yy.ast.nuevaInstruccion($1); }
+    
+	| indentaciones instruccion_funcion	                { console.log("aquiinstruccion");if(esPrimerInstruccion){ esPrimerInstruccion=false; agregarPrimeraInstruccion($2);} else { accionStack($2);} }
 
 	| error SALTO 
     { console.log("error "+this._$.first_line+" "+this._$.first_column);agregarErrorSintactico(yytext, this._$.first_line, this._$.first_column, "Instruccion declarada incorrectamente"); }
@@ -1023,33 +1045,36 @@ tipo_dato
 ;
 
 declaracion_funcion
-	: R_VOID declaracion_funciond instrucciones_funcion
+	: R_VOID declaracion_funciond SALTO
+    { $$ = crearDeclaracionFuncion(Parser.yy.utilidades.nuevoTerminalDato($1,@1.first_line,@1.first_column,5), $2[0], $2[1]); esPrimerInstruccion=true;}
+    
+	| tipo_dato declaracion_funciond SALTO
+    { $$ = crearDeclaracionFuncion($1, $2[0], $2[1]); esPrimerInstruccion=true;}
+/*
+	| R_VOID declaracion_funciond instrucciones_funcion
     { $$ = crearDeclaracionFuncion(Parser.yy.utilidades.nuevoTerminalDato($1,@1.first_line,@1.first_column,5), $2[0], $2[1]); esPrimerInstruccion=true;}
 
 	| tipo_dato declaracion_funciond instrucciones_funcion
     { $$ = crearDeclaracionFuncion($1, $2[0], $2[1]); esPrimerInstruccion=true;}
-
-	| R_VOID declaracion_funciond
-    { $$ = crearDeclaracionFuncion(Parser.yy.utilidades.nuevoTerminalDato($1,@1.first_line,@1.first_column,5), $2[0], $2[1]); esPrimerInstruccion=true;}
-    
-	| tipo_dato declaracion_funciond
-    { $$ = crearDeclaracionFuncion($1, $2[0], $2[1]); esPrimerInstruccion=true;}
+    */
 ;
 
 declaracion_funciond
-	: VARIABLE_IDENTIFICADOR PAR_IZQ PAR_DER DOS_PUNTOS SALTO
+	: VARIABLE_IDENTIFICADOR PAR_IZQ PAR_DER DOS_PUNTOS
     { $$ = crearParteFuncion( Parser.yy.utilidades.nuevoTerminal($1, @1.first_line, @1.first_column), undefined ); }
 
-	| VARIABLE_IDENTIFICADOR PAR_IZQ declaracion_parametros PAR_DER DOS_PUNTOS SALTO
+	| VARIABLE_IDENTIFICADOR PAR_IZQ declaracion_parametros PAR_DER DOS_PUNTOS
     { $$ = crearParteFuncion( Parser.yy.utilidades.nuevoTerminal($1, @1.first_line, @1.first_column), $3 ); }
 ;
 
+/*
 instrucciones_funcion
 	: instrucciones_funcion indentaciones instruccion_funcion	{ if(esPrimerInstruccion){ esPrimerInstruccion=false; agregarPrimeraInstruccion($3);} else { accionStack($3);} }
 	| instrucciones_funcion indentaciones SALTO	                {}
 	| indentaciones instruccion_funcion							{ esPrimerInstruccion=false; agregarPrimeraInstruccion($2); }
 	| indentaciones SALTO							            {}
 ;
+*/
 
 instruccion_funcion
     : declaracion_variable SALTO 					        { $$ = $1; }

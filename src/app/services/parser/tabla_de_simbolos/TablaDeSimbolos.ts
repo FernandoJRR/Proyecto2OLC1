@@ -80,6 +80,7 @@ export class TablaDeSimbolos {
     }
     
     update_valor_variable(llave: string, nuevoValor: any){
+        console.log("valor nuevo "+llave+JSON.stringify(nuevoValor))
         let valorActual: AtributoVariable = this.lookup(llave) as AtributoVariable;
         valorActual.valor = nuevoValor;
         
@@ -175,6 +176,27 @@ export class TablaDeSimbolos {
         });
         return arregloString;        
     }
+    
+    copiar(){
+        let nuevaTabla = new TablaDeSimbolos();
+        nuevaTabla.scope = this.scope;
+        nuevaTabla.parent_scope = this.parent_scope;
+        let simbolosNuevos:Map<string, Atributo> = new Map()
+        for (const [llave,valor] of this.simbolos) {
+            if (valor instanceof AtributoVariable) {
+                simbolosNuevos.set(llave,valor.copiar())            
+            } else {
+                simbolosNuevos.set(llave,valor)            
+            }
+        }
+        let nested:TablaDeSimbolos[] = []
+        this.nested_scopes.forEach(anidado => {
+            nested.push(anidado.copiar());
+        });
+        nuevaTabla.nested_scopes = nested;
+
+        return nuevaTabla;
+    }
 }
 
 export class Atributo{
@@ -209,6 +231,10 @@ export class AtributoVariable extends Atributo{
     
     inicializar(){
         this.inicializacion = true;
+    }
+    
+    copiar(){
+        return new AtributoVariable(String(super.nombre),super.tipo,this.inicializacion,super.posicion,Object.assign({},this.valor));
     }
 }
 

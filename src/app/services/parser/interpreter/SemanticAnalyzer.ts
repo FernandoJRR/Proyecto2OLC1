@@ -1,4 +1,5 @@
 import { FormControl } from "@angular/forms";
+import { AppComponent, ArchivoPreinterpretado } from "src/app/app.component";
 import { AST, Nodo, NodoExpresion, NodoInstruccion, NodoNoTerminal, NodoRaiz, Terminal, TerminalTipoDato, TipoDato, TipoExpresionLogica, TipoExpresionMatematica, TipoExpresionRelacional, TipoInstruccion, TipoNoTerminal, UtilidadesAST } from "../ast/AST";
 import { ErrorList } from "../manejo_error/ErrorList";
 import { Token } from "../model/Token";
@@ -15,16 +16,75 @@ export class SemanticAnalyzer{
     listaErrores: ErrorList;
     utilidaddes: UtilidadesAST;
     
-    constructor(ast: AST, tablaDeSimbolos: TablaDeSimbolos, listaErrores: ErrorList){
-        this.ast = ast;
+    controlGlobal: ArchivoPreinterpretado[];
+    nombreArchivo: string;
+    
+    tienePrincipal: boolean = false;
+    
+    archivosImportados:string[] = [];
+    constructor(archivo:ArchivoPreinterpretado, tablaDeSimbolos:TablaDeSimbolos, listaErrores: ErrorList, controlGlobal:ArchivoPreinterpretado[]){
+        this.ast = archivo.ast;
         this.tablaDeSimbolos = tablaDeSimbolos;
         this.scopeActual = tablaDeSimbolos;
         this.listaErrores = listaErrores;        
         this.utilidaddes = new UtilidadesAST;        
+        
+        this.controlGlobal = controlGlobal;
+        this.nombreArchivo = archivo.nombreArchivo;
+    }
+    
+    buscarPreinterpretado(busqueda:string){
+        for (let i = 0; i < this.controlGlobal.length; i++) {
+            const archivo = this.controlGlobal[i];
+            if (archivo.nombreArchivo == busqueda) {
+                return archivo;
+            }
+        }
+        return undefined;
+    }
+    
+    lookup_global(llave:string){
+        for (let i = 0; i < this.archivosImportados.length; i++) {
+            const archivo = this.archivosImportados[i];
+            let preInterpretado = this.buscarPreinterpretado(archivo); 
+            if (preInterpretado != undefined) {
+                if (preInterpretado.tablaDeSimbolos != undefined) {
+                    for (let index = 0; index < preInterpretado.tablaDeSimbolos.nested_scopes.length; index++) {
+                        const anidado = preInterpretado.tablaDeSimbolos.nested_scopes[index];
+                        if (anidado.scope.scope_name == llave) {
+                            return archivo;
+                        }
+                    }
+                }
+            }
+        }
+        return undefined;        
+    }
+    
+    buscarFuncionesGlobal(identificador:string){
+        let matches:string[] = [];
+        for (let i = 0; i < this.archivosImportados.length; i++) {
+            const archivo = this.archivosImportados[i];
+            let preInterpretado = this.buscarPreinterpretado(archivo); 
+            if (preInterpretado != undefined) {
+                if (preInterpretado.tablaDeSimbolos != undefined) {
+                    for (let index = 0; index < preInterpretado.tablaDeSimbolos.nested_scopes.length; index++) {
+                        const anidado = preInterpretado.tablaDeSimbolos.nested_scopes[index];
+                        let idFuncion = anidado.scope.scope_name!.slice(1, anidado.scope.scope_name!.length);
+                        idFuncion = idFuncion.split("|")[0];
+                        if (idFuncion === identificador) {
+                            matches.push(anidado.scope.scope_name!);
+                        }                
+                    }
+                }
+            }
+        }
+        return matches;
     }
 
     analizarAST(){
         this.analizar(this.ast.raiz);
+        return new ArchivoPreinterpretado(this.nombreArchivo, this.ast, this.tablaDeSimbolos, this.tienePrincipal, this.archivosImportados);        
     }
     
     analizar(nodo: Nodo|Terminal){
@@ -34,7 +94,7 @@ export class SemanticAnalyzer{
             } else if (nodo instanceof NodoInstruccion) {
                 switch (nodo.tipoInstruccion) {
                     case TipoInstruccion.Importacion:
-                        //pendiente
+                        this.analizar_importacion(nodo);
                         break;
                     case TipoInstruccion.Incerteza:
                         this.analizar_incerteza(nodo);
@@ -71,6 +131,11 @@ export class SemanticAnalyzer{
         
         //Acciones Postorden
         //console.log(this.scopeActual);
+    }
+    
+    analizar_importacion(nodo: NodoInstruccion){
+//se espera la estructura -> hijos: Terminal(Token(Archivo))
+        this.archivosImportados.push((nodo.hijos[0] as Terminal).token.lexema);
     }
     
     //Puede arrojar ErrorTipoOperacion si la expresion asociada a la incerteza es incorrecta
@@ -261,13 +326,22 @@ export class SemanticAnalyzer{
             //Se declara el identificador de la funcion en la tabla de simbolos
             let llaveFuncion = this.scopeActual.crearLlaveDeParametros(tokenIdentificador.lexema, parametrosDeclarados);
             let resultadoTabla: Atributo|undefined = this.scopeActual.lookup(llaveFuncion);
+            let existenciaGlobal = this.lookup_global(llaveFuncion);
             
             //Si se obtiene un resultado de la tabla significa que la funcion ya fue declarada una vez
-            if (resultadoTabla != undefined) {
-                this.listaErrores.agregarErrorParametros(tokenIdentificador.lexema, tokenIdentificador.linea, tokenIdentificador.columna, "La funcion (con los mismos parametros) ya ha sido declarada una vez")
+            if (existenciaGlobal != undefined) {
+                this.listaErrores.agregarErrorParametros(tokenIdentificador.lexema, tokenIdentificador.linea, tokenIdentificador.columna, "La funcion (con los mismos parametros) ya ha sido declarada una vez en el archivo: "+existenciaGlobal);
             } else {
-                this.scopeActual.insertar(llaveFuncion, new AtributoFuncion(tokenIdentificador.lexema, tipoRetorno, parametrosDeclarados, [tokenIdentificador.linea, tokenIdentificador.columna], nodo.hijos[3]==undefined? undefined:nodo.hijos[3] as NodoNoTerminal))
-            }        
+                if(resultadoTabla != undefined) {
+                    this.listaErrores.agregarErrorParametros(tokenIdentificador.lexema, tokenIdentificador.linea, tokenIdentificador.columna, "La funcion (con los mismos parametros) ya ha sido declarada una vez")
+                } else {
+                    if (tokenIdentificador.lexema === "Principal") {
+                        console.log(this.nombreArchivo+" tiene principal")
+                        this.tienePrincipal = true;
+                    }
+                    this.scopeActual.insertar(llaveFuncion, new AtributoFuncion(tokenIdentificador.lexema, tipoRetorno, parametrosDeclarados, [tokenIdentificador.linea, tokenIdentificador.columna], nodo.hijos[3]==undefined? undefined:nodo.hijos[3] as NodoNoTerminal))
+                }        
+            }
 
             //Se crea la tabla de simbolos de la declaracion de la funcion
             let scopeFuncion: TablaDeSimbolos = new TablaDeSimbolos(new Scope(ScopeType.Funcion, llaveFuncion, false), this.scopeActual);
@@ -283,26 +357,30 @@ export class SemanticAnalyzer{
                 }
             });
 
+            //El scope se mueve al scope de la funcion y se agrega el tipo de retorno al stack
+            this.scopeActual = scopeFuncion;
+            this.retornoActual.push(tipoRetorno);
+            
+            let retornable:boolean;
             if (nodo.hijos[3] != undefined) {
-                //El scope se mueve al scope de la funcion y se agrega el tipo de retorno al stack
-                this.scopeActual = scopeFuncion;
-                this.retornoActual.push(tipoRetorno);
                 //se analizan las intrucciones de la funcion
                 this.analizar_instrucciones(nodo.hijos[3] as NodoNoTerminal);
-                
-                let retornable:boolean = this.analizar_retornabilidad(this.scopeActual);
-                
-                if (!retornable && tipoRetorno!=TipoDato.Void) {
-                    this.scopeActual.scope.retornabilidad = retornable;
-                    this.listaErrores.agregarErrorParametros(tokenIdentificador.lexema, tokenIdentificador.linea, tokenIdentificador.columna, "La funcion no retorna un valor por todos los caminos");
-                }
-
-                this.retornoActual.pop();
-
-                //El scope se mueve al padre del scope funcion
-                this.scopeActual = this.scopeActual.parent_scope!;
-
+                retornable = this.analizar_retornabilidad(this.scopeActual);
+            } else {
+                retornable = false;
             }        
+            
+            
+            if (!retornable && tipoRetorno!=TipoDato.Void) {
+                this.scopeActual.scope.retornabilidad = retornable;
+                this.listaErrores.agregarErrorParametros(tokenIdentificador.lexema, tokenIdentificador.linea, tokenIdentificador.columna, "La funcion no retorna un valor por todos los caminos");
+            }
+
+            this.retornoActual.pop();
+
+            //El scope se mueve al padre del scope funcion
+            this.scopeActual = this.scopeActual.parent_scope!;
+
         }
     }
 
@@ -420,7 +498,11 @@ export class SemanticAnalyzer{
         const analizadorInterpolacion = require("./interpolation_parser.js");
         let parametrosFormato: (string|string[])[] = [];
         analizadorInterpolacion.Parser.yy = { formato: parametrosFormato };        
-        analizadorInterpolacion.parse(tokenString.lexema);        
+        try{
+            analizadorInterpolacion.parse(tokenString.lexema);        
+        } catch(error) {
+            this.listaErrores.agregarErrorParametros(tokenString.lexema, tokenString.linea, tokenString.columna, "El string en mostrar no esta bien definido");
+        }
         
         let columnaActual = tokenString.columna;
     
@@ -453,9 +535,10 @@ export class SemanticAnalyzer{
             if (this.listaErrores.errores.length == cantidadErrores) {
                 let llaveFuncion = this.scopeActual.crearLlaveDeParametrosNumeros(tokenIdentificador.lexema, parametros);            
                 let resultadoTabla: Atributo|undefined = this.scopeActual.lookup(llaveFuncion);
+                let existenciaGlobal = this.lookup_global(llaveFuncion);
                 
                 //Si se obtiene un resultado de la tabla significa que la funcion ya fue declarada una vez
-                if (resultadoTabla == undefined) {
+                if ((resultadoTabla == undefined) && (existenciaGlobal == undefined)) {
                     this.listaErrores.agregarErrorParametros(tokenIdentificador.lexema, tokenIdentificador.linea, tokenIdentificador.columna, "La funcion (con los mismos parametros) no ha sido declarada")
                 }
             }      
@@ -570,8 +653,9 @@ export class SemanticAnalyzer{
     analizar_dibujar_ast(nodo: NodoInstruccion){
         if (nodo.tipoInstruccion == TipoInstruccion.DibujarAST) {
             let identificador = (nodo.hijos[0] as Terminal).token.lexema;
-            let funciones: string[] = this.scopeActual.buscarFunciones(identificador, []);       
-            if (funciones.length == 0) {
+            let funcionesLocales: string[] = this.scopeActual.buscarFunciones(identificador, []);       
+            let funcionesGlobales: string[] = this.buscarFuncionesGlobal(identificador);
+            if ((funcionesLocales.length == 0) && (funcionesGlobales.length == 0)) {
                 this.listaErrores.agregarErrorParametros("DibujarAST", this.utilidaddes.obtenerLineaNodo(nodo), this.utilidaddes.obtenerColumnaNodo(nodo), "No existen funciones con el identificador '"+identificador+"'");
             }
         }
@@ -636,19 +720,23 @@ export class SemanticAnalyzer{
         let scopeMientras: TablaDeSimbolos = new TablaDeSimbolos(new Scope(ScopeType.Ciclo, "Mientras", true), this.scopeActual);
         this.scopeActual.agregarInnerScope(scopeMientras);
         
-        if (nodo.hijos[1] != undefined) {
             //El scope se mueve al scope de la funcion y se agrega el tipo de retorno al stack
             this.scopeActual = scopeMientras;
-            //se analizan las intrucciones de la funcion
-            this.analizar_instrucciones(nodo.hijos[1] as NodoNoTerminal);
             
-            let retornable:boolean = this.analizar_retornabilidad(this.scopeActual);
+            let retornable:boolean;
+        if (nodo.hijos[1] != undefined) {
+            //se analizan las intrucciones
+            this.analizar_instrucciones(nodo.hijos[1] as NodoNoTerminal);
+            retornable = this.analizar_retornabilidad(this.scopeActual);
+        } else {
+            retornable = false;
+        }        
+            
             
             this.scopeActual.scope.retornabilidad = retornable;
             
             //El scope se mueve al padre del scope funcion
             this.scopeActual = this.scopeActual.parent_scope!;
-        }        
     }
     analizar_para(nodo: NodoInstruccion){
         //se espera la estructura -> hijos: NodoNoTerminal(CondicionInicialPara(Terminal(Identificador),NodoExpresion|Terminal)), NodoExpresion|Terminal, Terminal [, Instrucciones]
@@ -724,20 +812,25 @@ export class SemanticAnalyzer{
         
         this.scopeActual = this.scopeActual.parent_scope!;
         
-        if (nodo.hijos[3] != undefined) {
             //El scope se mueve al scope de la funcion y se agrega el tipo de retorno al stack
             this.scopeActual = scopePara;
+
+            let retornable:boolean;
+        if (nodo.hijos[3] != undefined) {
             //se analizan las intrucciones de la funcion
             this.analizar_instrucciones(nodo.hijos[3] as NodoNoTerminal);
+            retornable = this.analizar_retornabilidad(this.scopeActual);
+        } else {
+            retornable = false;
+        }        
             
-            let retornable:boolean = this.analizar_retornabilidad(this.scopeActual);
             
             this.scopeActual.scope.retornabilidad = retornable;
 
             //El scope se mueve al padre del scope funcion
             this.scopeActual = this.scopeActual.parent_scope!;
-        }        
     }
+    
     analizar_si(nodo: NodoInstruccion){
         try{
             let tipoExpresion: TipoDato = this.analizar_expresion(nodo.hijos[0] as (NodoExpresion|Terminal));
@@ -768,9 +861,9 @@ export class SemanticAnalyzer{
         let scopeSi: TablaDeSimbolos = new TablaDeSimbolos(new Scope(ScopeType.Condicion, "Si", true), this.scopeActual);
         this.scopeActual.agregarInnerScope(scopeSi);
 
+        //El scope se mueve al scope del si
+        this.scopeActual = scopeSi;
         if (nodo.hijos.length > 1) {
-            //El scope se mueve al scope del si
-            this.scopeActual = scopeSi;
             
             if (nodo.hijos[1] instanceof NodoInstruccion) {
                 //El scope se mueve al padre del scope funcion
@@ -792,8 +885,10 @@ export class SemanticAnalyzer{
                     this.scopeActual = this.scopeActual.parent_scope!;
                 }
             }
-            
-            
+        } else {
+            this.scopeActual.scope.retornabilidad = false;
+            //El scope se mueve al padre del scope funcion
+            this.scopeActual = this.scopeActual.parent_scope!;
         }        
     }
     analizar_sino(nodo: NodoInstruccion){
@@ -801,19 +896,22 @@ export class SemanticAnalyzer{
         let scopeSino: TablaDeSimbolos = new TablaDeSimbolos(new Scope(ScopeType.Condicion, "Sino", true), this.scopeActual);
         this.scopeActual.agregarInnerScope(scopeSino);
         
+        //El scope se mueve al scope de la funcion y se agrega el tipo de retorno al stack
+        this.scopeActual = scopeSino;
+        let retornable:boolean;
         if (nodo.hijos.length > 1) {
-            //El scope se mueve al scope de la funcion y se agrega el tipo de retorno al stack
-            this.scopeActual = scopeSino;
             //se analizan las intrucciones de la funcion
             this.analizar_instrucciones(nodo.hijos[1] as NodoNoTerminal);
+            retornable = this.analizar_retornabilidad(this.scopeActual);
+        } else {
+            retornable = false;
+        }        
             
-            let retornable:boolean = this.analizar_retornabilidad(this.scopeActual);
             
             this.scopeActual.scope.retornabilidad = retornable;
 
             //El scope se mueve al padre del scope funcion
             this.scopeActual = this.scopeActual.parent_scope!;
-        }        
     }
     
     //Puede arrojar ErrorTipoOperacion si la expresion tiene una expresion entre dos tipos prohibida

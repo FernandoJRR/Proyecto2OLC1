@@ -15,7 +15,7 @@
 <parametro_state>[^}]+  Parser.yy.formato.push([yytext]);
 
 <<EOF>>	 //Se termina el string
-[^{}]+   { Parser.yy.formato.push(yytext) }
+[^{]+   { Parser.yy.formato.push(yytext) }
 \s  { Parser.yy.formato.push(yytext)}
 
 /lex
