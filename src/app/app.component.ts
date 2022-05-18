@@ -236,6 +236,8 @@ export class AppComponent {
   }
   
   reset_compilador(){
+    let controlOutput = new ControlConsola(this.area_programa);
+    controlOutput.limpiarOutput()
     this.archivosCantidadImportaciones = new Map();
     this.archivosProyecto = []
     this.colaImportaciones = [];

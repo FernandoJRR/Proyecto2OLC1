@@ -1250,4 +1250,8 @@ export class Parametro{
         this.tipo = tipo;
         this.identificador = identificador;
     }
+    
+    toString():string{
+        return TipoDato[this.tipo]+":"+this.identificador.lexema
+    }
 }
